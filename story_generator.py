@@ -83,6 +83,7 @@ Do NOT include full_story or scene_keywords — they are handled separately."""
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 40000,
         "temperature": 0.7,
+        "response_format": {"type": "json_object"},
     }
 
     print(f"📝 جاري توليد محتوى عن: {chosen_topic}")
@@ -160,10 +161,10 @@ Examples of good search queries:
 Facts:
 {paragraphs_text}
 
-Reply with JSON ONLY — a list of exactly {len(paragraphs)} strings, one per fact, in order:
-["search query for fact 1", "search query for fact 2", ...]
+Reply with JSON ONLY in this exact shape:
+{{"queries": ["search query for fact 1", "search query for fact 2", ...]}}
 
-No extra text, no markdown, just the JSON array."""
+Exactly {len(paragraphs)} items in the list. No extra text, no markdown."""
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -175,6 +176,7 @@ No extra text, no markdown, just the JSON array."""
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 40000,
         "temperature": 0.5,
+        "response_format": {"type": "json_object"},
     }
 
     for attempt in range(3):
@@ -184,10 +186,8 @@ No extra text, no markdown, just the JSON array."""
             raw = response.json()["choices"][0]["message"]["content"]
             raw = re.sub(r"```json|```", "", raw).strip()
 
-            if not raw.rstrip().endswith("]"):
-                raw = raw.rstrip().rstrip(",") + "]"
-
-            prompts = json.loads(raw)
+            data = json.loads(raw)
+            prompts = data.get("queries", [])
 
             if isinstance(prompts, list) and len(prompts) == len(paragraphs):
                 print(f"✅ برومبتات الصور جاهزة ({len(prompts)} مشهد)")
