@@ -253,13 +253,15 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 
 
 # ==============================
-#  توليد صور الخلفية عن طريق Mistral AI (web search)
+#  توليد صور الخلفية عن طريق Mistral
 # ==============================
 
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب صورة عن طريق Mistral web search بدل SerpHouse."""
+    """يجيب URLs صور من Mistral زي ما بنجيب القصة بالظبط."""
     import json, re
     from config import MISTRAL_API_KEY
+
+    MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
@@ -272,45 +274,47 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
     print(f"  🤖 صورة {label}: بيطلب من Mistral عن '{keyword}'...")
 
+    prompt = f"""You are a Google image search expert.
+For this topic: "{keyword}"
+Give me 8 direct image URLs from the web that show this topic clearly.
+
+Rules:
+- Real working URLs ending in .jpg, .jpeg, .png, or .webp
+- High quality photos, not illustrations
+- From reliable sources (wikimedia, nasa.gov, nationalgeographic.com, etc.)
+
+Reply with JSON ONLY — a list of exactly 8 URL strings:
+["https://...", "https://...", ...]
+No explanation, no markdown, just the JSON array."""
+
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "mistral-small-2506",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,
+        "temperature": 0.3,
+    }
+
     try:
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_API_KEY}",
-            "Content-Type":  "application/json",
-        }
-        payload = {
-            "model": "mistral-small-2506",
-            "tools": [{"type": "web_search"}],
-            "messages": [{
-                "role": "user",
-                "content": (
-                    f"Search the web for high quality images of: {keyword}\n"
-                    "Return ONLY a JSON array of 5 direct image URLs (ending in .jpg/.png/.webp). "
-                    "No explanation, no markdown. Example:\n"
-                    '["https://example.com/img1.jpg", "https://example.com/img2.png"]'
-                )
-            }]
-        }
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        raw = response.json()["choices"][0]["message"]["content"]
+        raw = re.sub(r"```json|```", "", raw).strip()
 
-        r = requests.post(
-            "https://api.mistral.ai/v1/chat/completions",
-            json=payload, headers=headers, timeout=60
-        )
-        r.raise_for_status()
-        data = r.json()
-
-        full_text = data["choices"][0]["message"]["content"] or ""
-
-        match = re.search(r'\[.*?\]', full_text, re.DOTALL)
+        match = re.search(r'\[.*?\]', raw, re.DOTALL)
         if not match:
-            raise ValueError(f"Mistral ما رجعش URLs: {full_text[:200]}")
+            raise ValueError(f"Mistral ما رجعش URLs: {raw[:200]}")
 
         urls = json.loads(match.group())
         print(f"  🔗 Mistral رجّع {len(urls)} URL")
 
         dl_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer":    "https://www.google.com/",
-            "Accept":     "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer": "https://www.google.com/",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
         }
         for img_url in urls:
             try:
