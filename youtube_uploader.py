@@ -131,6 +131,9 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
         print(f"🔗 الرابط: {video_url}")
 
         if thumbnail_path and os.path.exists(thumbnail_path):
+            import time
+            print("⏳ انتظار 15s عشان YouTube يفهرس الفيديو قبل الـ thumbnail...")
+            time.sleep(15)
             upload_thumbnail(youtube, video_id, thumbnail_path)
 
         return video_id
@@ -143,14 +146,22 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
 
 
 def upload_thumbnail(youtube, video_id: str, thumbnail_path: str):
-    try:
-        youtube.thumbnails().set(
-            videoId=video_id,
-            media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
-        ).execute()
-        print("🖼️ تم رفع الـ thumbnail")
-    except Exception as e:
-        print(f"⚠️ فشل رفع الـ thumbnail: {e}")
+    import time
+    for attempt in range(5):
+        try:
+            if attempt > 0:
+                wait = attempt * 10
+                print(f"  ⏳ انتظار {wait}s قبل محاولة thumbnail ({attempt+1}/5)...")
+                time.sleep(wait)
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
+            ).execute()
+            print("🖼️ تم رفع الـ thumbnail")
+            return
+        except Exception as e:
+            print(f"⚠️ محاولة {attempt+1} فشلت: {e}")
+    print("❌ فشل رفع الـ thumbnail بعد 5 محاولات")
 
 
 def build_description(story: dict) -> str:
