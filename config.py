@@ -14,7 +14,7 @@ FREESOUND_API_KEY = os.environ.get("FREESOUND_API_KEY", "")
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 
 # GitHub Token - لاستخدام GPT-4o عبر GitHub Models
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_TOKEN = os.environ.get("GH_TOKEN", "")
 
 # YouTube Token - بييجي من GitHub Secret كـ JSON string
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN", "")
