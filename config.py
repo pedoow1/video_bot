@@ -10,9 +10,15 @@ STORY_MAX_WORDS = 600
 # Freesound API
 FREESOUND_API_KEY = os.environ.get("FREESOUND_API_KEY", "")
 
-# Pexels API - للصور الحقيقية الاحترافية (مجاني ومش فيه copyright strike)
-# اعمل حساب على pexels.com/api واحصل على مفتاحك
+# Pexels API (قديم - مش بيستخدم)
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+
+# Google Custom Search API - للصور
+# 1. فعّل "Custom Search JSON API" من: https://console.cloud.google.com/apis/library
+# 2. اعمل Search Engine من: https://programmablesearchengine.google.com
+#    وفعّل "Search the entire web" + "Image search"
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+GOOGLE_CSE_ID  = os.environ.get("GOOGLE_CSE_ID", "")
 
 # YouTube Token - بييجي من GitHub Secret كـ JSON string
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN", "")
