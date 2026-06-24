@@ -257,8 +257,8 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 # ==============================
 
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب صورة حقيقية من Pexels API — مجاني ومش فيه copyright strike"""
-    from config import PEXELS_API_KEY
+    """يجيب صورة من Google Custom Search API بناءً على البرومبت الفعلي للمشهد."""
+    from config import GOOGLE_API_KEY, GOOGLE_CSE_ID
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
@@ -270,44 +270,63 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
 
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
 
-    # نجرب الـ keyword الأصلي، ولو فشل نجرب كلمة أبسط منه
-    search_terms = [keyword, keyword.split()[0] if " " in keyword else keyword, "nature"]
+    # نجرب الـ keyword الكامل أولاً، ثم نبسّطه، ثم fallback عام
+    search_terms = [
+        keyword,
+        " ".join(keyword.split()[:3]) if len(keyword.split()) > 3 else keyword,
+        keyword.split()[0] if " " in keyword else keyword,
+        "nature landscape",
+    ]
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; VideoBot/1.0)"}
 
     for term in search_terms:
         for attempt in range(2):
             try:
-                encoded = urllib.parse.quote(term)
-                # orientation=landscape عشان يناسب الفيديو 16:9
-                url = f"https://api.pexels.com/v1/search?query={encoded}&per_page=15&orientation=landscape"
-                headers = {"Authorization": PEXELS_API_KEY}
-
-                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في Pexels...")
-                r = requests.get(url, headers=headers, timeout=30)
+                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في Google...")
+                params = {
+                    "key":        GOOGLE_API_KEY,
+                    "cx":         GOOGLE_CSE_ID,
+                    "q":          term,
+                    "searchType": "image",
+                    "num":        10,
+                    "imgSize":    "large",          # large أو xlarge
+                    "imgType":    "photo",           # صور حقيقية مش clip art
+                    "safe":       "active",
+                    "fileType":   "jpg",
+                }
+                r = requests.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params=params, headers=headers, timeout=30
+                )
                 r.raise_for_status()
+                items = r.json().get("items", [])
 
-                data = r.json()
-                photos = data.get("photos", [])
-
-                if not photos:
+                if not items:
                     print(f"  ⚠️ مفيش نتائج لـ '{term}'")
                     break  # جرب الكلمة الجاية
 
-                # اختار صورة عشوائية من أول 10 نتائج عشان التنوع
-                photo = random.choice(photos[:10])
-                # نجيب أكبر حجم متاح
-                img_url = photo["src"].get("original") or photo["src"]["large2x"]
+                # اختار عشوائي من أول 8 نتايج عشان التنوع
+                item = random.choice(items[:min(8, len(items))])
+                img_url = item["link"]
+                title   = item.get("title", "")
 
-                print(f"  ⬇️ بيتحمل: {photo['photographer']} — {photo['url']}")
-                img_r = requests.get(img_url, timeout=60)
+                print(f"  ⬇️ بيتحمل: {title[:50]} — {img_url[:60]}...")
+                img_r = requests.get(img_url, timeout=60, headers=headers)
                 img_r.raise_for_status()
 
                 if len(img_r.content) < 5000:
                     print(f"  ⚠️ صورة صغيرة جداً — retry")
                     continue
 
+                # نتأكد إنها صورة صحيحة قبل نحفظها
+                from io import BytesIO
+                test_img = Image.open(BytesIO(img_r.content))
+                test_img.verify()
+
                 with open(img_path, "wb") as f:
                     f.write(img_r.content)
-                print(f"  ✅ صورة {label} جاهزة ({photo['photographer']})")
+                print(f"  ✅ صورة {label} جاهزة ({test_img.format if hasattr(test_img, 'format') else 'IMG'})")
                 return img_path
 
             except Exception as e:
