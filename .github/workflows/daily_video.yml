@@ -1,0 +1,63 @@
+name: 🎬 Video Bot - Daily Upload
+
+on:
+  schedule:
+    - cron: '0 16 * * *'   # كل يوم الساعة 6 مساءً بتوقيت القاهرة (UTC+2)
+  workflow_dispatch:         # تشغيل يدوي من GitHub
+
+jobs:
+  make-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 🎞️ Install FFmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: 📦 Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install \
+            requests \
+            moviepy \
+            Pillow \
+            edge-tts \
+            google-api-python-client \
+            google-auth-httplib2 \
+            google-auth-oauthlib \
+            schedule \
+            numpy \
+            mistralai
+
+      - name: 🔤 Download Arabic font
+        run: |
+          mkdir -p assets/fonts
+          curl -L "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" \
+               -o assets/fonts/arabic.ttf
+
+      - name: 📁 Create output dirs
+        run: mkdir -p output/audio output/videos output/images output/music output/sfx
+
+      - name: 🚀 Run Video Bot
+        env:
+          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
+          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
+          YOUTUBE_TOKEN:    ${{ secrets.YOUTUBE_TOKEN }}
+        run: python main.py --now
+
+      - name: 📋 Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-log
+          path: output/videos_log.txt
+          if-no-files-found: ignore
