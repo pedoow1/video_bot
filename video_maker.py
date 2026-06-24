@@ -71,6 +71,21 @@ MUSIC_LIBRARY = {
         "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Dark%20Times.mp3",
         "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Darkness%20Speaks.mp3",
     ],
+    # ── موسيقى لـ "10 Amazing Facts" content ──
+    "epic": [
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Epic%20Action%20A.mp3",
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Epic%20Action%20B.mp3",
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Heroic%20Age.mp3",
+    ],
+    "educational": [
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Investigations.mp3",
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cipher.mp3",
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Thinking%20Music.mp3",
+    ],
+    "inspiring": [
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Inspired.mp3",
+        "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Adventure%201.mp3",
+    ],
 }
 DEFAULT_MUSIC_MOOD = "mysterious"
 
@@ -241,12 +256,9 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 #  توليد صور الخلفية
 # ==============================
 
-_last_pollinations_request = 0.0
-POLLINATIONS_DELAY = 4.0
-
-
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    global _last_pollinations_request
+    """يجيب صورة حقيقية من Pexels API — مجاني ومش فيه copyright strike"""
+    from config import PEXELS_API_KEY
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
@@ -256,49 +268,51 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         print(f"  ✅ صورة {scene_index if isinstance(scene_index, str) else scene_index+1} موجودة")
         return img_path
 
-    styles = [
-        "anime style, detailed illustration, cinematic lighting",
-        "cartoon style, vibrant colors, studio ghibli inspired",
-        "anime art, dramatic scene, high quality",
-        "animated style, beautiful background, detailed",
-        "anime illustration, atmospheric, colorful",
-    ]
-
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
 
-    for attempt in range(3):
-        try:
-            elapsed = time.time() - _last_pollinations_request
-            if elapsed < POLLINATIONS_DELAY:
-                time.sleep(POLLINATIONS_DELAY - elapsed)
+    # نجرب الـ keyword الأصلي، ولو فشل نجرب كلمة أبسط منه
+    search_terms = [keyword, keyword.split()[0] if " " in keyword else keyword, "nature"]
 
-            style       = styles[style_index % len(styles)]
-            full_prompt = f"{keyword}, {style}"
-            encoded     = urllib.parse.quote(full_prompt)
-            url = (
-                f"https://image.pollinations.ai/prompt/{encoded}"
-                f"?width={VIDEO_WIDTH}&height={VIDEO_HEIGHT}"
-                f"&model=flux&nologo=true&seed={random.randint(1, 99999)}"
-            )
+    for term in search_terms:
+        for attempt in range(2):
+            try:
+                encoded = urllib.parse.quote(term)
+                # orientation=landscape عشان يناسب الفيديو 16:9
+                url = f"https://api.pexels.com/v1/search?query={encoded}&per_page=15&orientation=landscape"
+                headers = {"Authorization": PEXELS_API_KEY}
 
-            print(f"  🖼️ صورة {label} (محاولة {attempt+1}): {keyword}")
-            _last_pollinations_request = time.time()
-            r = requests.get(url, timeout=90)
-            r.raise_for_status()
+                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في Pexels...")
+                r = requests.get(url, headers=headers, timeout=30)
+                r.raise_for_status()
 
-            if len(r.content) < 5000:
-                print(f"  ⚠️ صورة صغيرة جداً — retry")
-                time.sleep(6)
-                continue
+                data = r.json()
+                photos = data.get("photos", [])
 
-            with open(img_path, "wb") as f:
-                f.write(r.content)
-            print(f"  ✅ صورة {label} جاهزة")
-            return img_path
+                if not photos:
+                    print(f"  ⚠️ مفيش نتائج لـ '{term}'")
+                    break  # جرب الكلمة الجاية
 
-        except Exception as e:
-            print(f"  ⚠️ محاولة {attempt+1} فشلت: {e}")
-            time.sleep(6)
+                # اختار صورة عشوائية من أول 10 نتائج عشان التنوع
+                photo = random.choice(photos[:10])
+                # نجيب أكبر حجم متاح
+                img_url = photo["src"].get("original") or photo["src"]["large2x"]
+
+                print(f"  ⬇️ بيتحمل: {photo['photographer']} — {photo['url']}")
+                img_r = requests.get(img_url, timeout=60)
+                img_r.raise_for_status()
+
+                if len(img_r.content) < 5000:
+                    print(f"  ⚠️ صورة صغيرة جداً — retry")
+                    continue
+
+                with open(img_path, "wb") as f:
+                    f.write(img_r.content)
+                print(f"  ✅ صورة {label} جاهزة ({photo['photographer']})")
+                return img_path
+
+            except Exception as e:
+                print(f"  ⚠️ محاولة {attempt+1} فشلت ({term}): {e}")
+                time.sleep(2)
 
     print(f"  ❌ صورة {label} فشلت — fallback")
     return _fallback_background(str(keyword), int(style_index))
