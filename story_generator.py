@@ -1,4 +1,4 @@
-# story_generator.py - توليد القصص بـ Mistral
+# story_generator.py - توليد محتوى "10 Amazing Facts" بـ Mistral
 
 import json
 import re
@@ -8,51 +8,62 @@ from config import MISTRAL_API_KEY
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 
 TOPICS = [
-    "a mysterious horror story in an abandoned village",
-    "a touching love story set in wartime",
-    "a fantasy adventure in a parallel world",
-    "a human story about someone who transforms their life",
-    "a mysterious puzzle in an ancient city",
-    "a science fiction story about the future",
-    "a story about friends' loyalty in the hardest of times",
-    "an adventure in the depths of the ocean",
-    "an AI that discovers its own emotions",
-    "a murder mystery in a historic mansion",
+    "10 mind-blowing facts about Ancient Egypt",
+    "10 incredible facts about the human brain",
+    "10 shocking facts about outer space",
+    "10 amazing facts about the deep ocean",
+    "10 surprising facts about animals that will blow your mind",
+    "10 unbelievable facts about ancient Rome",
+    "10 fascinating facts about the human body",
+    "10 crazy facts about the universe that science just discovered",
+    "10 mind-blowing facts about quantum physics",
+    "10 shocking facts about volcanoes and earthquakes",
+    "10 amazing facts about the Amazon rainforest",
+    "10 incredible facts about black holes",
+    "10 surprising facts about dreams and sleep",
+    "10 unbelievable facts about ancient civilizations",
+    "10 mind-blowing facts about DNA and genetics",
+    "10 fascinating facts about the moon",
+    "10 shocking facts about prehistoric creatures",
+    "10 amazing facts about extreme weather phenomena",
+    "10 incredible facts about the human immune system",
+    "10 surprising facts about mathematics hidden in nature",
 ]
 
 
 def generate_story(topic: str = None) -> dict:
-    """يولد قصة قصيرة مع كل بيانات الفيديو"""
+    """يولد فيديو '10 Amazing Facts' مع كل بيانات الفيديو"""
 
     import random
     chosen_topic = topic or random.choice(TOPICS)
 
-    prompt = f"""You are a professional short-story writer. Write a gripping short story IN ENGLISH about: {chosen_topic}
+    prompt = f"""You are a professional YouTube content creator specializing in "Did You Know?" and "Amazing Facts" videos.
 
-Story requirements:
-- 750-900 words total
-- A striking opening line that hooks the reader immediately
-- Rising tension with real suspense
-- A surprising or emotionally impactful ending
-- Polished, literary, engaging style
-- Split into EXACTLY 15 paragraphs (3-4 sentences each, no more, no less)
+Create a "10 Amazing Facts" video script IN ENGLISH about: {chosen_topic}
+
+Requirements:
+- EXACTLY 10 facts, each one genuinely surprising and mind-blowing
+- Each fact should be 3-4 sentences: state the fact, explain it, add a wow detail
+- Hook the viewer immediately with the most shocking fact first
+- Use conversational, energetic tone like Bright Side or Facts Verse
+- Each fact must be a standalone "scene" — no cliffhangers between facts
 
 Reply with JSON ONLY, no extra text, in exactly this shape:
 {{
-  "title": "catchy, curiosity-driven title (under 70 characters)",
-  "description": "engaging YouTube description (150-200 words, hooks without spoiling)",
-  "tags": ["story", "shortstory", "tag3", "tag4", "tag5", "tag6", "tag7"],
+  "title": "catchy title starting with a number or question (under 70 chars, e.g. '10 Mind-Blowing Facts About Space That Will Shock You')",
+  "description": "engaging YouTube description (150-200 words, teases the facts without spoiling them, ends with CTA to like and subscribe)",
+  "tags": ["facts", "amazingfacts", "didyouknow", "tag4", "tag5", "tag6", "tag7", "tag8"],
   "story_paragraphs": [
-    "Paragraph 1 of exactly 15...",
-    "Paragraph 2 of exactly 15...",
-    "Paragraph 3 of exactly 15..."
+    "Fact 1: [Fact title]. [3-4 sentences explaining it with wow factor]",
+    "Fact 2: [Fact title]. [3-4 sentences explaining it with wow factor]",
+    "... exactly 10 items total ..."
   ],
-  "full_story": "the complete story text, unsplit...",
-  "bg_keyword": "overall English theme word for fallback backgrounds (e.g. forest, night, ocean, desert)",
-  "mood": "mysterious"
+  "full_story": "all 10 facts combined as one continuous text",
+  "bg_keyword": "single English word representing the main topic (e.g. space, ocean, brain, egypt)",
+  "mood": "epic"
 }}
 
-CRITICAL: story_paragraphs must contain EXACTLY 15 items. Count them before responding.
+CRITICAL: story_paragraphs must contain EXACTLY 10 items — one per fact. Count them before responding.
 Important: DO NOT include scene_keywords in this response — they will be generated separately."""
 
     headers = {
@@ -63,11 +74,11 @@ Important: DO NOT include scene_keywords in this response — they will be gener
     payload = {
         "model": "mistral-small-2506",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 8000,
+        "max_tokens": 6000,
         "temperature": 0.7,
     }
 
-    print(f"📝 جاري توليد قصة عن: {chosen_topic}")
+    print(f"📝 جاري توليد محتوى عن: {chosen_topic}")
 
     try:
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
@@ -80,27 +91,26 @@ Important: DO NOT include scene_keywords in this response — they will be gener
         if "full_story" not in data or not data["full_story"]:
             data["full_story"] = " ".join(data.get("story_paragraphs", []))
 
-        data.setdefault("bg_keyword", "dark forest")
-        data.setdefault("mood", "mysterious")
-        data.setdefault("tags", ["story", "shortstory"])
+        data.setdefault("bg_keyword", "space")
+        data.setdefault("mood", "epic")
+        data.setdefault("tags", ["facts", "amazingfacts", "didyouknow"])
 
-        # ── validation: لازم يكون 15 فقرة بالظبط ──
+        # ── validation: لازم يكون 10 حقائق بالظبط ──
         paras = data.get("story_paragraphs", [])
-        if len(paras) != 15:
-            print(f"⚠️ Mistral رجّع {len(paras)} فقرة بدل 15 — جاري التصحيح...")
-            if len(paras) > 15:
-                data["story_paragraphs"] = paras[:15]
+        if len(paras) != 10:
+            print(f"⚠️ Mistral رجّع {len(paras)} فقرة بدل 10 — جاري التصحيح...")
+            if len(paras) > 10:
+                data["story_paragraphs"] = paras[:10]
             else:
-                # لو أقل، بنكرر آخر فقرة عشان نكمل العدد
-                while len(data["story_paragraphs"]) < 15:
+                while len(data["story_paragraphs"]) < 10:
                     data["story_paragraphs"].append(data["story_paragraphs"][-1])
-            print(f"✅ تم التصحيح: {len(data['story_paragraphs'])} فقرة")
+            print(f"✅ تم التصحيح: {len(data['story_paragraphs'])} حقائق")
 
-        print(f"✅ القصة جاهزة: {data['title']}")
+        print(f"✅ المحتوى جاهز: {data['title']}")
 
-        # ─── الخطوة الجديدة: توليد برومبت صورة مخصص لكل فقرة ───
+        # ─── توليد برومبت صورة مخصص لكل حقيقة ───
         paragraphs = data.get("story_paragraphs", [])
-        print(f"\n🎨 جاري توليد برومبتات الصور لكل مشهد ({len(paragraphs)} مشهد)...")
+        print(f"\n🎨 جاري توليد برومبتات الصور لكل حقيقة ({len(paragraphs)} مشهد)...")
         scene_keywords = generate_scene_image_prompts(paragraphs, data["title"], data["bg_keyword"])
         data["scene_keywords"] = scene_keywords
 
@@ -117,26 +127,25 @@ Important: DO NOT include scene_keywords in this response — they will be gener
 
 def generate_scene_image_prompts(paragraphs: list, story_title: str, bg_keyword: str) -> list:
     """
-    يسأل Mistral يولد برومبت صورة AI مخصص لكل فقرة بناءً على محتواها الفعلي.
-    ده بيضمن إن كل مشهد بصري متعلق بالأحداث الفعلية في الفقرة دي بالتحديد.
+    يسأل Mistral يولد برومبت صورة AI مخصص لكل حقيقة بناءً على محتواها الفعلي.
     """
     paragraphs_text = "\n\n".join(
-        f"[Scene {i+1}]: {p}" for i, p in enumerate(paragraphs)
+        f"[Fact {i+1}]: {p}" for i, p in enumerate(paragraphs)
     )
 
-    prompt = f"""You are an AI image prompt specialist. I have a story called "{story_title}".
+    prompt = f"""You are an AI image prompt specialist for a "10 Amazing Facts" YouTube channel.
 
-For EACH scene below, write ONE short image generation prompt (5-10 words) that:
-- Captures what is SPECIFICALLY happening or described in THAT scene
-- Is vivid and visual (describes setting, action, mood, or key object)
-- Is suitable for anime/illustration style image generation
-- Does NOT repeat the same prompt across scenes
+For EACH fact below, write ONE short image generation prompt (5-10 words) that:
+- Visually represents what the fact is describing
+- Is dramatic, cinematic, and visually striking
+- Suitable for photo-realistic or cinematic style image generation
+- Does NOT repeat the same prompt across facts
 
-Story scenes:
+Facts:
 {paragraphs_text}
 
-Reply with JSON ONLY — a list of exactly {len(paragraphs)} strings, one per scene, in order:
-["prompt for scene 1", "prompt for scene 2", ...]
+Reply with JSON ONLY — a list of exactly {len(paragraphs)} strings, one per fact, in order:
+["prompt for fact 1", "prompt for fact 2", ...]
 
 No extra text, no markdown, just the JSON array."""
 
@@ -148,7 +157,7 @@ No extra text, no markdown, just the JSON array."""
     payload = {
         "model": "mistral-small-2506",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 2000,
+        "max_tokens": 1000,
         "temperature": 0.5,
     }
 
@@ -162,10 +171,10 @@ No extra text, no markdown, just the JSON array."""
         if isinstance(prompts, list) and len(prompts) == len(paragraphs):
             print(f"✅ برومبتات الصور جاهزة ({len(prompts)} مشهد)")
             for i, p in enumerate(prompts):
-                print(f"   مشهد {i+1}: {p}")
+                print(f"   حقيقة {i+1}: {p}")
             return prompts
         else:
-            print(f"⚠️ عدد البرومبتات ({len(prompts) if isinstance(prompts, list) else '?'}) != عدد الفقرات ({len(paragraphs)}) — fallback لـ bg_keyword")
+            print(f"⚠️ عدد البرومبتات غلط — fallback لـ bg_keyword")
             return [bg_keyword] * len(paragraphs)
 
     except Exception as e:
@@ -177,7 +186,7 @@ if __name__ == "__main__":
     story = generate_story()
     print(f"\nالعنوان: {story['title']}")
     print(f"الموود: {story['mood']}")
-    print(f"\nأول فقرة:\n{story['story_paragraphs'][0]}")
+    print(f"\nأول حقيقة:\n{story['story_paragraphs'][0]}")
     print(f"\nبرومبتات الصور:")
     for i, kw in enumerate(story['scene_keywords']):
-        print(f"  مشهد {i+1}: {kw}")
+        print(f"  حقيقة {i+1}: {kw}")
