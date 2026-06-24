@@ -1,33 +1,35 @@
 # youtube_uploader.py - رفع الفيديو على YouTube
 
 import os
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # لازم يكون أول سطر
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 import json
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-# ==============================
-#  الإعدادات
-# ==============================
-YOUTUBE_CLIENT_SECRETS = "client_secrets.json"
-YOUTUBE_TOKEN          = "youtube_token.json"
-YOUTUBE_SCOPES         = ["https://www.googleapis.com/auth/youtube.upload"]
+YOUTUBE_TOKEN   = "youtube_token.json"
+YOUTUBE_SCOPES  = ["https://www.googleapis.com/auth/youtube.upload"]
 
-
-# ==============================
-#  المصادقة
-# ==============================
 
 def get_youtube_service():
     """يسجل دخول YouTube ويرجع الـ service"""
     creds = None
 
-    # لو عندنا token محفوظ من قبل
-    if os.path.exists(YOUTUBE_TOKEN):
+    # ─── أولاً: جرب من Environment Variable (GitHub Actions) ───
+    token_json = os.environ.get("YOUTUBE_TOKEN", "")
+    if token_json:
+        try:
+            token_data = json.loads(token_json)
+            creds = Credentials.from_authorized_user_info(token_data, YOUTUBE_SCOPES)
+            print("✅ تم تحميل YouTube token من Environment Variable")
+        except Exception as e:
+            print(f"⚠️ فشل تحميل token من env: {e}")
+            creds = None
+
+    # ─── ثانياً: جرب من ملف محلي ───────────────────────────────
+    if not creds and os.path.exists(YOUTUBE_TOKEN):
         try:
             creds = Credentials.from_authorized_user_file(YOUTUBE_TOKEN, YOUTUBE_SCOPES)
             print("✅ تم تحميل الـ token المحفوظ")
@@ -35,43 +37,15 @@ def get_youtube_service():
             print(f"⚠️ الـ token القديم خربان: {e}")
             creds = None
 
-    # لو محتاج مصادقة جديدة
     if not creds or not creds.valid:
-
-        if not os.path.exists(YOUTUBE_CLIENT_SECRETS):
-            print("❌ ملف client_secrets.json مش موجود!")
-            print("   روح: console.cloud.google.com")
-            print("   APIs & Services → Credentials → Create OAuth 2.0 Client ID")
-            print("   حمّل الـ JSON وسميه client_secrets.json")
-            raise FileNotFoundError("client_secrets.json مش موجود")
-
-        print("\n" + "="*50)
-        print("  مصادقة YouTube")
-        print("="*50)
-
-        flow = InstalledAppFlow.from_client_secrets_file(
-            YOUTUBE_CLIENT_SECRETS,
-            YOUTUBE_SCOPES
+        raise RuntimeError(
+            "❌ مفيش YouTube token صالح!\n"
+            "   - في GitHub: ضيف YOUTUBE_TOKEN في Secrets\n"
+            "   - محلياً: شغّل python youtube_uploader.py مرة واحدة"
         )
-
-        # شغّل سيرفر محلي على port 8080
-        creds = flow.run_local_server(
-            port=8080,
-            prompt="consent",
-            access_type="offline"
-        )
-
-        # حفظ الـ token للمرات الجاية
-        with open(YOUTUBE_TOKEN, "w") as f:
-            f.write(creds.to_json())
-        print("✅ تم حفظ الـ token - مش هتحتاج تعمل ده تاني")
 
     return build("youtube", "v3", credentials=creds)
 
-
-# ==============================
-#  رفع الفيديو
-# ==============================
 
 def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> str:
     """يرفع الفيديو على YouTube ويرجع الـ video ID"""
@@ -84,17 +58,16 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
 
     youtube = get_youtube_service()
 
-    # بيانات الفيديو
     body = {
         "snippet": {
-            "title":       story["title"],
-            "description": build_description(story),
-            "tags":        story.get("tags", []),
-            "categoryId":  "22",               # People & Blogs
+            "title":           story["title"],
+            "description":     build_description(story),
+            "tags":            story.get("tags", []),
+            "categoryId":      "22",
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus":          "public",
+            "privacyStatus":           "public",
             "selfDeclaredMadeForKids": False,
         }
     }
@@ -103,18 +76,13 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
         video_path,
         mimetype="video/mp4",
         resumable=True,
-        chunksize=1024 * 1024 * 5  # 5MB chunks
+        chunksize=1024 * 1024 * 5
     )
 
     try:
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body=body,
-            media_body=media
-        )
-
-        # رفع تدريجي مع شريط تقدم
+        request  = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
         response = None
+
         while response is None:
             status, response = request.next_chunk()
             if status:
@@ -122,15 +90,13 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
                 bar = "█" * (percent // 5) + "░" * (20 - percent // 5)
                 print(f"\r  [{bar}] {percent}%", end="", flush=True)
 
-        print()  # سطر جديد بعد شريط التقدم
+        print()
 
         video_id  = response["id"]
         video_url = f"https://youtube.com/watch?v={video_id}"
-
         print(f"✅ تم الرفع بنجاح!")
         print(f"🔗 الرابط: {video_url}")
 
-        # رفع الـ thumbnail لو موجود
         if thumbnail_path and os.path.exists(thumbnail_path):
             upload_thumbnail(youtube, video_id, thumbnail_path)
 
@@ -144,7 +110,6 @@ def upload_video(video_path: str, story: dict, thumbnail_path: str = None) -> st
 
 
 def upload_thumbnail(youtube, video_id: str, thumbnail_path: str):
-    """يرفع thumbnail للفيديو"""
     try:
         youtube.thumbnails().set(
             videoId=video_id,
@@ -156,27 +121,17 @@ def upload_thumbnail(youtube, video_id: str, thumbnail_path: str):
 
 
 def build_description(story: dict) -> str:
-    """يبني وصف YouTube من بيانات القصة"""
     desc = story.get("description", "")
-
     desc += "\n\n" + "─" * 30
     desc += "\n\n📖 Daily short stories - Subscribe and hit the bell 🔔"
-
-    # إضافة الـ tags كـ hashtags
     tags = story.get("tags", [])
     if tags:
         hashtags = " ".join([f"#{t.replace(' ', '_')}" for t in tags[:5]])
         desc += f"\n\n{hashtags}"
+    return desc[:5000]
 
-    return desc[:5000]  # YouTube حد أقصى 5000 حرف
-
-
-# ==============================
-#  تشغيل مباشر للمصادقة
-# ==============================
 
 if __name__ == "__main__":
     print("🔐 جاري المصادقة مع YouTube...")
     youtube = get_youtube_service()
     print("✅ المصادقة تمت بنجاح!")
-    print("   youtube_token.json اتحفظ — مش هتحتاج تعمل ده تاني")
