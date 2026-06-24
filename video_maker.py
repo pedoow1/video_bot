@@ -16,7 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
 
-from moviepy.editor import (
+from moviepy import (
     VideoFileClip, AudioFileClip, ImageClip, VideoClip,
     CompositeVideoClip, concatenate_videoclips,
     TextClip, ColorClip
