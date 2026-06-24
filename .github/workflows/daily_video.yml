@@ -38,9 +38,11 @@ jobs:
 
       - name: 🚀 Run Video Bot
         env:
-          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
           FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
-          YOUTUBE_TOKEN:    ${{ secrets.YOUTUBE_TOKEN }}
+          YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
+          GOOGLE_API_KEY:    ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CSE_ID:     ${{ secrets.GOOGLE_CSE_ID }}
         run: python main.py --now
 
       - name: 📋 Upload log artifact
