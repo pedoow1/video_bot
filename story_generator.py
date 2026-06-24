@@ -45,25 +45,32 @@ def generate_story(topic: str = None) -> dict:
 
     chosen_topic = topic or pick_topic()
 
-    prompt = f"""You are a professional YouTube content creator specializing in "Did You Know?" and "Amazing Facts" videos.
+    prompt = f"""You are an energetic, charismatic YouTube narrator — like the voice of Bright Side or Facts Verse.
 
-Create a "10 Amazing Facts" video script IN ENGLISH about: {chosen_topic}
+Write a full video SCRIPT in ENGLISH about: {chosen_topic}
 
-Requirements:
-- EXACTLY 10 facts, each one genuinely surprising and mind-blowing
-- Each fact should be 3-4 sentences: state the fact, explain it, add a wow detail
-- Hook the viewer immediately with the most shocking fact first
-- Use conversational, energetic tone like Bright Side or Facts Verse
-- Each fact must be a standalone "scene" — no cliffhangers between facts
+The script must feel like a real human is talking to camera — NOT reading a list of facts.
 
-Reply with JSON ONLY, no extra text, in exactly this shape:
+Script structure (EXACTLY in this order):
+1. HOOK (1 scene): Start with something like "Hey guys, welcome back! Today we're diving into [topic] — and trust me, some of these will absolutely blow your mind. Let's get into it!"
+2. FACTS (8 scenes): Present 8 genuinely surprising facts, each as a natural monologue. Between facts use transitions like "Now here's where it gets crazy...", "But wait, it gets better...", "I know, right? But check this out..."
+3. OUTRO (1 scene): End with "And that's a wrap! Which fact shocked you the most? Drop it in the comments below. And if you enjoyed this video, smash that like button and subscribe so you never miss a video. I'll catch you in the next one!"
+
+Rules:
+- Talk TO the viewer — say "you", "guys", "we", "your"
+- Each scene is 3-5 sentences of natural speech
+- Make it fun, warm, and conversational — NOT robotic or encyclopedic
+- No bullet points, no "Fact 1:" labels — just natural speech
+- EXACTLY 10 scenes total (1 hook + 8 facts + 1 outro)
+
+Reply with JSON ONLY:
 {{
   "title": "catchy title starting with a number or question (under 70 chars)",
   "description": "engaging YouTube description (80-100 words, ends with CTA to like and subscribe)",
   "tags": ["facts", "amazingfacts", "didyouknow", "tag4", "tag5", "tag6", "tag7", "tag8"],
   "story_paragraphs": [
-    "Fact 1: [Fact title]. [3-4 sentences explaining it with wow factor]",
-    "Fact 2: [Fact title]. [3-4 sentences explaining it with wow factor]",
+    "Hey guys, welcome back! ...",
+    "Okay so first up — ...",
     "... exactly 10 items total ..."
   ],
   "bg_keyword": "single English word representing the main topic (e.g. space, ocean, brain, egypt)",
