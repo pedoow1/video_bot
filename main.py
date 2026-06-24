@@ -5,8 +5,9 @@ import time
 import schedule
 import argparse
 from datetime import datetime
-from story_generator  import generate_story, generate_scene_image_prompts
+from story_generator  import generate_story, generate_scene_descriptions
 from tts_engine       import text_to_speech_paragraphs
+from image_fetcher    import get_scene_images
 from video_maker      import create_video, create_thumbnail, fetch_background_images
 from youtube_uploader import upload_video
 from config           import UPLOAD_SCHEDULE_HOUR, STORIES_PER_DAY, OUTPUT_DIR
@@ -36,14 +37,16 @@ def run_pipeline(topic: str = None):
         duration       = audio_info["total_duration"]
         print(f"   مدة الصوت: {duration:.0f} ثانية ({duration/60:.1f} دقيقة)")
 
-        # ─── الخطوة 2.5: توليد برومبتات الصور (بعد TTS) ─
-        print("\n🎨 [2.5/4] توليد برومبتات الصور لكل مشهد...")
-        scene_keywords = generate_scene_image_prompts(
+        # ─── الخطوة 2.5: وصف المشاهد + جلب الصور بـ GPT-4o ─
+        print("\n🎨 [2.5/4] توليد أوصاف المشاهد...")
+        scene_descriptions = generate_scene_descriptions(
             story["story_paragraphs"],
-            story["title"],
-            story.get("bg_keyword", "space")
+            story["title"]
         )
-        story["scene_keywords"] = scene_keywords
+
+        print("\n🖼️ GPT-4o بيجيب الصور...")
+        scene_image_paths = get_scene_images(scene_descriptions)
+        story["scene_image_paths"] = scene_image_paths
 
         # ─── الخطوة 3: صناعة الفيديو ──────────────────────
         print("\n🎬 [3/4] صناعة الفيديو...")
