@@ -43,6 +43,7 @@ jobs:
           YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
           GOOGLE_API_KEY:    ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_CSE_ID:     ${{ secrets.GOOGLE_CSE_ID }}
+          SERPHOUSE_API_KEY: ${{ secrets.SERPHOUSE_API_KEY }}
         run: python main.py --now
 
       - name: 📋 Upload log artifact
