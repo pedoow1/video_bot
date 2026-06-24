@@ -5,6 +5,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 import json
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -37,9 +38,41 @@ def get_youtube_service():
             print(f"⚠️ الـ token القديم خربان: {e}")
             creds = None
 
-    if not creds or not creds.valid:
+    # ─── Refresh لو expired ──────────────────────────────────────
+    if creds and not creds.valid:
+        if creds.expired and creds.refresh_token:
+            try:
+                print("🔄 جاري تجديد YouTube token...")
+                creds.refresh(Request())
+                print("✅ تم تجديد الـ token بنجاح")
+
+                # لو شغلنا محلياً، احفظ الـ token الجديد
+                if not os.environ.get("GITHUB_ACTIONS"):
+                    with open(YOUTUBE_TOKEN, "w") as f:
+                        f.write(creds.to_json())
+                    print("💾 تم حفظ الـ token الجديد محلياً")
+                else:
+                    # في GitHub Actions: اطبع الـ token الجديد عشان تحدثه في Secrets
+                    print("\n⚠️  IMPORTANT: Update YOUTUBE_TOKEN secret in GitHub with:")
+                    print("─" * 50)
+                    print(creds.to_json())
+                    print("─" * 50 + "\n")
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"❌ فشل تجديد الـ token: {e}\n"
+                    "   شغّل محلياً: python youtube_uploader.py"
+                )
+        else:
+            raise RuntimeError(
+                "❌ مفيش YouTube token صالح!\n"
+                "   - في GitHub: ضيف YOUTUBE_TOKEN في Secrets\n"
+                "   - محلياً: شغّل python youtube_uploader.py مرة واحدة"
+            )
+
+    if not creds:
         raise RuntimeError(
-            "❌ مفيش YouTube token صالح!\n"
+            "❌ مفيش YouTube token!\n"
             "   - في GitHub: ضيف YOUTUBE_TOKEN في Secrets\n"
             "   - محلياً: شغّل python youtube_uploader.py مرة واحدة"
         )
