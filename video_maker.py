@@ -257,8 +257,8 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 # ==============================
 
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب صورة من Google Custom Search API بناءً على البرومبت الفعلي للمشهد."""
-    from config import GOOGLE_API_KEY, GOOGLE_CSE_ID
+    """يجيب صورة من SerpHouse API بناءً على البرومبت الفعلي للمشهد."""
+    from config import SERPHOUSE_API_KEY
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
@@ -278,41 +278,51 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         "nature landscape",
     ]
 
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; VideoBot/1.0)"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; VideoBot/1.0)",
+        "Authorization": f"Bearer {SERPHOUSE_API_KEY}",
+    }
 
     for term in search_terms:
         for attempt in range(2):
             try:
-                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في Google...")
+                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في SerpHouse...")
                 params = {
-                    "key":        GOOGLE_API_KEY,
-                    "cx":         GOOGLE_CSE_ID,
-                    "q":          term,
-                    "searchType": "image",
-                    "num":        10,
-                    "imgSize":    "large",          # large أو xlarge
-                    "imgType":    "photo",           # صور حقيقية مش clip art
-                    "safe":       "active",
-                    "fileType":   "jpg",
+                    "q":       term,
+                    "type":    "images",
+                    "page":    "1",
+                    "num":     "10",
+                    "country": "us",
+                    "lang":    "en",
                 }
                 r = requests.get(
-                    "https://www.googleapis.com/customsearch/v1",
+                    "https://api.serphouse.com/serp/live",
                     params=params, headers=headers, timeout=30
                 )
                 r.raise_for_status()
-                items = r.json().get("items", [])
+                data = r.json()
 
-                if not items:
+                # SerpHouse بيرجع الصور في results.images
+                images = (data.get("data", {})
+                              .get("results", {})
+                              .get("images", []))
+
+                if not images:
                     print(f"  ⚠️ مفيش نتائج لـ '{term}'")
                     break  # جرب الكلمة الجاية
 
                 # اختار عشوائي من أول 8 نتايج عشان التنوع
-                item = random.choice(items[:min(8, len(items))])
-                img_url = item["link"]
+                item    = random.choice(images[:min(8, len(images))])
+                img_url = item.get("url") or item.get("original") or item.get("link", "")
                 title   = item.get("title", "")
 
+                if not img_url:
+                    print(f"  ⚠️ مفيش URL في النتيجة")
+                    continue
+
                 print(f"  ⬇️ بيتحمل: {title[:50]} — {img_url[:60]}...")
-                img_r = requests.get(img_url, timeout=60, headers=headers)
+                img_r = requests.get(img_url, timeout=60,
+                                     headers={"User-Agent": "Mozilla/5.0"})
                 img_r.raise_for_status()
 
                 if len(img_r.content) < 5000:
@@ -326,7 +336,7 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
 
                 with open(img_path, "wb") as f:
                     f.write(img_r.content)
-                print(f"  ✅ صورة {label} جاهزة ({test_img.format if hasattr(test_img, 'format') else 'IMG'})")
+                print(f"  ✅ صورة {label} جاهزة")
                 return img_path
 
             except Exception as e:
