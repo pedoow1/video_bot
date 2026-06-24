@@ -307,10 +307,9 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
                 r.raise_for_status()
                 data = r.json()
 
-                # SerpHouse بيرجع الصور في results.images
-                images = (data.get("data", {})
-                              .get("results", {})
-                              .get("images", []))
+                # SerpHouse بيرجع الصور في results.results (array) لـ serp_type=image
+                images = (data.get("results", {})
+                              .get("results", []) or [])
 
                 if not images:
                     print(f"  ⚠️ مفيش نتائج لـ '{term}'")
@@ -318,7 +317,7 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
 
                 # اختار عشوائي من أول 8 نتايج عشان التنوع
                 item    = random.choice(images[:min(8, len(images))])
-                img_url = item.get("url") or item.get("original") or item.get("link", "")
+                img_url = item.get("original") or item.get("url") or item.get("link", "")
                 title   = item.get("title", "")
 
                 if not img_url:
