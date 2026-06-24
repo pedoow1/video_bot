@@ -279,25 +279,29 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
     ]
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; VideoBot/1.0)",
-        "Authorization": f"Bearer {SERPHOUSE_API_KEY}",
+        "accept":        "application/json",
+        "content-type":  "application/json",
+        "authorization": f"Bearer {SERPHOUSE_API_KEY}",
     }
 
     for term in search_terms:
         for attempt in range(2):
             try:
                 print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في SerpHouse...")
-                params = {
-                    "q":       term,
-                    "type":    "images",
-                    "page":    "1",
-                    "num":     "10",
-                    "country": "us",
-                    "lang":    "en",
+                payload = {
+                    "data": {
+                        "q":         term,
+                        "domain":    "google.com",
+                        "lang":      "en",
+                        "device":    "desktop",
+                        "serp_type": "images",
+                        "page":      "1",
+                        "verbatim":  "0",
+                    }
                 }
-                r = requests.get(
+                r = requests.post(
                     "https://api.serphouse.com/serp/live",
-                    params=params, headers=headers, timeout=30
+                    json=payload, headers=headers, timeout=30
                 )
                 r.raise_for_status()
                 data = r.json()
