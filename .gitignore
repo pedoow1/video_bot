@@ -1,0 +1,23 @@
+# Secrets - متترفعوش أبداً
+config_local.py
+client_secrets.json
+youtube_token.json
+*.env
+.env
+
+# Output files
+output/
+*.mp4
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
