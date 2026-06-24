@@ -10,6 +10,10 @@ STORY_MAX_WORDS = 600
 # Freesound API
 FREESOUND_API_KEY = os.environ.get("FREESOUND_API_KEY", "")
 
+# Pexels API - للصور الحقيقية الاحترافية (مجاني ومش فيه copyright strike)
+# اعمل حساب على pexels.com/api واحصل على مفتاحك
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+
 # YouTube Token - بييجي من GitHub Secret كـ JSON string
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN", "")
 
@@ -22,10 +26,11 @@ FONT_SIZE_STORY  = 52
 FONT_SIZE_TITLE  = 72
 TEXT_COLOR       = "white"
 SHADOW_COLOR     = "black"
-IMAGE_DURATION   = 8
+IMAGE_DURATION   = 10   # كل حقيقة بتاخد وقت أكتر شوية من القصص
 
 # TTS - Edge-TTS (مجاني، بدون API key)
-TTS_VOICE    = "en-US-GuyNeural"
+# صوت إنجليزي energetic مناسب لـ "10 Amazing Facts" content
+TTS_VOICE    = "en-US-ChristopherNeural"   # صوت قوي ومقنع زي قنوات Facts
 TTS_LANGUAGE = "en"
 TTS_SPEED    = 1.0
 
