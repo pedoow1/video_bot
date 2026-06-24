@@ -613,11 +613,10 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     # ─── 1. صور الخلفية ───────────────────────────────────
     print(f"🎨 تجهيز {len(paragraphs)} صورة...")
     scene_image_paths = story_data.get("scene_image_paths", [])
+    scene_keywords = story_data.get("scene_keywords") or [bg_keyword] * len(paragraphs)
 
     # fallback لو مفيش صور من GPT-4o
     if len(scene_image_paths) != len(paragraphs):
-        from video_maker import fetch_scene_image
-        scene_keywords = story_data.get("scene_keywords") or [bg_keyword] * len(paragraphs)
         scene_image_paths = [fetch_scene_image(scene_keywords[i], i, i) for i in range(len(paragraphs))]
 
     # لو في صور None (فشل تحميلها) نعمل fallback لكل واحدة
