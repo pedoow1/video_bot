@@ -24,7 +24,8 @@ def fetch_image_urls_with_gpt(scene_descriptions: list) -> list:
 For each scene below, find ONE real image URL that:
 - Directly shows what the scene is describing (the actual subject, not a random related image)
 - Is a direct link to a real image file (.jpg, .jpeg, .png, .webp)
-- Comes from reliable sources: NASA, Wikipedia Commons, National Geographic, BBC, Reuters, AP, scientific institutions, or major news sites
+- Comes from reliable sources like NASA, National Geographic, BBC, Reuters, AP, scientific institutions, major news sites, or any public web source — search broadly like Google Images
+- NEVER use Wikimedia, Wikipedia Commons, or any upload.wikimedia.org URL — these are blocked and will fail to download
 - Is high resolution (at least 800x600)
 - Is NOT a thumbnail, icon, logo, or watermarked stock photo
 
@@ -34,7 +35,7 @@ Scenes:
 Reply with JSON ONLY in this exact shape:
 {{"images": [
   {{"scene": 1, "url": "https://...", "source": "NASA"}},
-  {{"scene": 2, "url": "https://...", "source": "Wikipedia"}},
+  {{"scene": 2, "url": "https://...", "source": "Reuters"}},
   ...
 ]}}
 
