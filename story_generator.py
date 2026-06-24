@@ -135,36 +135,37 @@ Do NOT include full_story or scene_keywords — they are handled separately."""
         raise
 
 
-def generate_scene_image_prompts(paragraphs: list, story_title: str, bg_keyword: str) -> list:
+def generate_scene_descriptions(paragraphs: list, story_title: str) -> list:
     """
-    يولد برومبت صورة لكل حقيقة — يُستدعى من main.py بعد انتهاء TTS.
+    يولد وصف تفصيلي للصورة المثالية لكل حقيقة —
+    GPT-4o هيستخدم الوصف ده يدور على الصورة الحقيقية.
     """
     paragraphs_text = "\n\n".join(
         f"[Fact {i+1}]: {p}" for i, p in enumerate(paragraphs)
     )
 
-    prompt = f"""You are a Google image search expert for a "10 Amazing Facts" YouTube channel.
+    prompt = f"""You are a visual director for a YouTube "10 Amazing Facts" video titled: "{story_title}"
 
-For EACH fact below, write ONE short Google image search query (2-5 words) that:
-- Searches for a real photo that visually represents the fact
-- Uses simple, specific keywords a person would type in Google Images
-- Returns high-quality real photos (not illustrations or diagrams)
-- Does NOT repeat the same query across facts
+For EACH fact below, write a detailed description of the IDEAL real photograph that would visually represent this fact.
 
-Examples of good search queries:
-- "ancient egyptian pyramids aerial view"
-- "human brain neurons closeup"
-- "deep ocean anglerfish"
-- "black hole nasa"
-- "amazon rainforest canopy"
+The description should:
+- Describe the actual subject of the fact (e.g. "A high-resolution NASA photo of the surface of Mars showing the Olympus Mons volcano")
+- Be specific enough that someone could find the exact real image online
+- Mention the specific subject, setting, and visual details
+- NOT describe illustrations, diagrams, or generic stock photos
+- Be 1-2 sentences max
 
 Facts:
 {paragraphs_text}
 
 Reply with JSON ONLY in this exact shape:
-{{"queries": ["search query for fact 1", "search query for fact 2", ...]}}
+{{"descriptions": [
+  "description for fact 1",
+  "description for fact 2",
+  ...
+]}}
 
-Exactly {len(paragraphs)} items in the list. No extra text, no markdown."""
+Exactly {len(paragraphs)} items. Be specific and visual."""
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -187,23 +188,22 @@ Exactly {len(paragraphs)} items in the list. No extra text, no markdown."""
             raw = re.sub(r"```json|```", "", raw).strip()
 
             data = json.loads(raw)
-            prompts = data.get("queries", [])
+            descriptions = data.get("descriptions", [])
 
-            if isinstance(prompts, list) and len(prompts) == len(paragraphs):
-                print(f"✅ برومبتات الصور جاهزة ({len(prompts)} مشهد)")
-                for i, p in enumerate(prompts):
-                    print(f"   حقيقة {i+1}: {p}")
-                return prompts
+            if isinstance(descriptions, list) and len(descriptions) == len(paragraphs):
+                print(f"✅ أوصاف المشاهد جاهزة ({len(descriptions)} مشهد)")
+                for i, d in enumerate(descriptions):
+                    print(f"   مشهد {i+1}: {d[:80]}...")
+                return descriptions
             else:
-                print(f"⚠️ محاولة {attempt+1}: رجع {len(prompts)} بدل {len(paragraphs)} — retry")
+                print(f"⚠️ محاولة {attempt+1}: رجع {len(descriptions)} بدل {len(paragraphs)} — retry")
                 continue
 
         except Exception as e:
             print(f"⚠️ محاولة {attempt+1} فشلت: {e} — retry")
             continue
 
-    print("❌ فشل توليد برومبتات الصور بعد 3 محاولات")
-    raise RuntimeError("generate_scene_image_prompts فشل — مش هنكمل")
+    raise RuntimeError("generate_scene_descriptions فشل بعد 3 محاولات")
 
 
 if __name__ == "__main__":
