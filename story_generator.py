@@ -133,19 +133,26 @@ def generate_scene_image_prompts(paragraphs: list, story_title: str, bg_keyword:
         f"[Fact {i+1}]: {p}" for i, p in enumerate(paragraphs)
     )
 
-    prompt = f"""You are an AI image prompt specialist for a "10 Amazing Facts" YouTube channel.
+    prompt = f"""You are a Google image search expert for a "10 Amazing Facts" YouTube channel.
 
-For EACH fact below, write ONE short image generation prompt (5-10 words) that:
-- Visually represents what the fact is describing
-- Is dramatic, cinematic, and visually striking
-- Suitable for photo-realistic or cinematic style image generation
-- Does NOT repeat the same prompt across facts
+For EACH fact below, write ONE short Google image search query (2-5 words) that:
+- Searches for a real photo that visually represents the fact
+- Uses simple, specific keywords a person would type in Google Images
+- Returns high-quality real photos (not illustrations or diagrams)
+- Does NOT repeat the same query across facts
+
+Examples of good search queries:
+- "ancient egyptian pyramids aerial view"
+- "human brain neurons closeup"
+- "deep ocean anglerfish"
+- "black hole nasa"
+- "amazon rainforest canopy"
 
 Facts:
 {paragraphs_text}
 
 Reply with JSON ONLY — a list of exactly {len(paragraphs)} strings, one per fact, in order:
-["prompt for fact 1", "prompt for fact 2", ...]
+["search query for fact 1", "search query for fact 2", ...]
 
 No extra text, no markdown, just the JSON array."""
 
