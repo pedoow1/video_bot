@@ -147,21 +147,23 @@ def download_scene_images(urls_data: list, scene_descriptions: list) -> list:
 
         # تحميل الـ URL اللي جابه GPT
         downloaded = False
-        print(f"  ⬇️ مشهد {i+1} [{source}]: بيتحمل...")
-        try:
-            r = requests.get(url, headers=DL_HEADERS, timeout=30, allow_redirects=True)
-            if r.status_code == 200 and len(r.content) > 3000 and "image" in r.headers.get("Content-Type", ""):
-                with open(img_path, "wb") as f:
-                    f.write(r.content)
-                print(f"  ✅ مشهد {i+1}: جاهزة")
-                paths.append(img_path)
-                downloaded = True
-            else:
-                print(f"  ❌ مشهد {i+1}: فشل (status {r.status_code})")
-                failed_urls.append(url)
-        except Exception as e:
-            print(f"  ❌ مشهد {i+1}: خطأ — {e}")
-            failed_urls.append(url)
+
+        if not url or not url.startswith("http"):
+            print(f"  ⚠️ مشهد {i+1}: URL فاضي أو غلط — Pollinations مباشرة")
+        else:
+            print(f"  ⬇️ مشهد {i+1} [{source}]: بيتحمل...")
+            try:
+                r = requests.get(url, headers=DL_HEADERS, timeout=30, allow_redirects=True)
+                if r.status_code == 200 and len(r.content) > 3000 and "image" in r.headers.get("Content-Type", ""):
+                    with open(img_path, "wb") as f:
+                        f.write(r.content)
+                    print(f"  ✅ مشهد {i+1}: جاهزة")
+                    paths.append(img_path)
+                    downloaded = True
+                else:
+                    print(f"  ❌ مشهد {i+1}: فشل (status {r.status_code})")
+            except Exception as e:
+                print(f"  ❌ مشهد {i+1}: خطأ — {e}")
 
         if not downloaded:
             # Pollinations fallback مباشرة
