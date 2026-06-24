@@ -294,7 +294,7 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
                         "domain":    "google.com",
                         "lang":      "en",
                         "device":    "desktop",
-                        "serp_type": "images",
+                        "serp_type": "image",
                         "page":      "1",
                         "verbatim":  "0",
                     }
