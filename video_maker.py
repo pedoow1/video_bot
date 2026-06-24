@@ -253,12 +253,13 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 
 
 # ==============================
-#  توليد صور الخلفية
+#  توليد صور الخلفية عن طريق Mistral AI (web search)
 # ==============================
 
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب صورة من SerpHouse API بناءً على البرومبت الفعلي للمشهد."""
-    from config import SERPHOUSE_API_KEY
+    """يجيب صورة عن طريق Mistral web search بدل SerpHouse."""
+    import json, re
+    from config import MISTRAL_API_KEY
 
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
@@ -269,100 +270,80 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         return img_path
 
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
+    print(f"  🤖 صورة {label}: بيطلب من Mistral عن '{keyword}'...")
 
-    # نجرب الـ keyword الكامل أولاً، ثم نبسّطه، ثم fallback عام
-    search_terms = [
-        keyword,
-        " ".join(keyword.split()[:3]) if len(keyword.split()) > 3 else keyword,
-        keyword.split()[0] if " " in keyword else keyword,
-        "nature landscape",
-    ]
-    # نشيل التكرار مع الحفاظ على الترتيب
-    seen = set()
-    search_terms = [t for t in search_terms if t not in seen and not seen.add(t)]
+    try:
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_API_KEY}",
+            "Content-Type":  "application/json",
+        }
+        payload = {
+            "model": "mistral-small-2506",
+            "tools": [{"type": "web_search"}],
+            "messages": [{
+                "role": "user",
+                "content": (
+                    f"Search the web for high quality images of: {keyword}\n"
+                    "Return ONLY a JSON array of 5 direct image URLs (ending in .jpg/.png/.webp). "
+                    "No explanation, no markdown. Example:\n"
+                    '["https://example.com/img1.jpg", "https://example.com/img2.png"]'
+                )
+            }]
+        }
 
-    headers = {
-        "accept":        "application/json",
-        "content-type":  "application/json",
-        "authorization": f"Bearer {SERPHOUSE_API_KEY}",
-    }
+        r = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            json=payload, headers=headers, timeout=60
+        )
+        r.raise_for_status()
+        data = r.json()
 
-    for term in search_terms:
-        try:
-            print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في SerpHouse...")
-            payload = {
-                "data": {
-                    "q":         term,
-                    "domain":    "google.com",
-                    "lang":      "en",
-                    "device":    "desktop",
-                    "serp_type": "image",
-                    "loc":       "United States",
-                    "page":      "1",
-                    "verbatim":  "0",
-                }
-            }
-            r = requests.post(
-                "https://api.serphouse.com/serp/live",
-                json=payload, headers=headers, timeout=30
-            )
-            r.raise_for_status()
-            data = r.json()
+        full_text = data["choices"][0]["message"]["content"] or ""
 
-            # SerpHouse image results: results.results أو results.images
-            raw = data.get("results", {})
-            images = raw.get("results") or raw.get("images") or []
+        match = re.search(r'\[.*?\]', full_text, re.DOTALL)
+        if not match:
+            raise ValueError(f"Mistral ما رجعش URLs: {full_text[:200]}")
 
-            if not images:
-                print(f"  ⚠️ مفيش نتائج لـ '{term}' — جاري تجربة التالي")
+        urls = json.loads(match.group())
+        print(f"  🔗 Mistral رجّع {len(urls)} URL")
+
+        dl_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer":    "https://www.google.com/",
+            "Accept":     "image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        for img_url in urls:
+            try:
+                print(f"  ⬇️ بيتحمل: {img_url[:80]}...")
+                img_r = requests.get(img_url, timeout=20, headers=dl_headers, allow_redirects=True)
+                if img_r.status_code != 200 or len(img_r.content) < 3000:
+                    continue
+
+                from io import BytesIO
+                pil_img = Image.open(BytesIO(img_r.content)).convert("RGB")
+                w, h = pil_img.size
+                if w < 100 or h < 100:
+                    continue
+
+                if w < VIDEO_WIDTH or h < VIDEO_HEIGHT:
+                    pil_img = pil_img.resize(
+                        (max(w, VIDEO_WIDTH), max(h, VIDEO_HEIGHT)),
+                        Image.LANCZOS
+                    )
+
+                pil_img.save(img_path, "JPEG", quality=90)
+                print(f"  ✅ صورة {label} جاهزة ({pil_img.size})")
+                return img_path
+
+            except Exception as dl_err:
+                print(f"  ⚠️ تحميل فشل: {dl_err}")
                 continue
 
-            # اختار عشوائي من أول 8 نتايج عشان التنوع
-            # SerpHouse image fields: img_src / original / url / link
-            random.shuffle(images[:min(8, len(images))])
-            downloaded = False
-            for item in images[:min(8, len(images))]:
-                img_url = (item.get("img_src") or item.get("original")
-                           or item.get("url") or item.get("link", ""))
-                title_str = item.get("title", "")
-
-                if not img_url:
-                    continue
-
-                try:
-                    print(f"  ⬇️ بيتحمل: {title_str[:50]} — {img_url[:60]}...")
-                    img_r = requests.get(img_url, timeout=30,
-                                         headers={"User-Agent": "Mozilla/5.0"},
-                                         allow_redirects=True)
-                    img_r.raise_for_status()
-
-                    if len(img_r.content) < 5000:
-                        print(f"  ⚠️ صورة صغيرة جداً — بيجرب الجاية")
-                        continue
-
-                    from io import BytesIO
-                    test_img = Image.open(BytesIO(img_r.content))
-                    test_img.verify()
-
-                    with open(img_path, "wb") as f:
-                        f.write(img_r.content)
-                    print(f"  ✅ صورة {label} جاهزة")
-                    return img_path
-
-                except Exception as dl_err:
-                    print(f"  ⚠️ تحميل فشل: {dl_err}")
-                    continue
-
-            # لو كل الصور في هذا الـ term فشلت، جرب التالي
-            print(f"  ⚠️ كل صور '{term}' فشلت في التحميل — جاري تجربة التالي")
-
-        except Exception as e:
-            print(f"  ⚠️ SerpHouse خطأ ({term}): {e}")
-            time.sleep(1)
+    except Exception as e:
+        print(f"  ⚠️ Mistral خطأ: {e}")
 
     print(f"  ❌ صورة {label} فشلت — fallback")
     return _fallback_background(str(keyword), int(style_index))
-
 
 def fetch_background_images(keyword: str, count: int = 1) -> list:
     return [fetch_scene_image(keyword, f"thumb_{i}", i) for i in range(count)]
