@@ -277,6 +277,9 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         keyword.split()[0] if " " in keyword else keyword,
         "nature landscape",
     ]
+    # نشيل التكرار مع الحفاظ على الترتيب
+    seen = set()
+    search_terms = [t for t in search_terms if t not in seen and not seen.add(t)]
 
     headers = {
         "accept":        "application/json",
@@ -285,67 +288,77 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
     }
 
     for term in search_terms:
-        for attempt in range(2):
-            try:
-                print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في SerpHouse...")
-                payload = {
-                    "data": {
-                        "q":         term,
-                        "domain":    "google.com",
-                        "lang":      "en",
-                        "device":    "desktop",
-                        "serp_type": "image",
-                        "loc":       "United States",
-                        "page":      "1",
-                        "verbatim":  "0",
-                    }
+        try:
+            print(f"  🖼️ صورة {label}: جاري البحث عن '{term}' في SerpHouse...")
+            payload = {
+                "data": {
+                    "q":         term,
+                    "domain":    "google.com",
+                    "lang":      "en",
+                    "device":    "desktop",
+                    "serp_type": "image",
+                    "loc":       "United States",
+                    "page":      "1",
+                    "verbatim":  "0",
                 }
-                r = requests.post(
-                    "https://api.serphouse.com/serp/live",
-                    json=payload, headers=headers, timeout=30
-                )
-                r.raise_for_status()
-                data = r.json()
+            }
+            r = requests.post(
+                "https://api.serphouse.com/serp/live",
+                json=payload, headers=headers, timeout=30
+            )
+            r.raise_for_status()
+            data = r.json()
 
-                # SerpHouse بيرجع الصور في results.results (array) لـ serp_type=image
-                images = (data.get("results", {})
-                              .get("results", []) or [])
+            # SerpHouse image results: results.results أو results.images
+            raw = data.get("results", {})
+            images = raw.get("results") or raw.get("images") or []
 
-                if not images:
-                    print(f"  ⚠️ مفيش نتائج لـ '{term}'")
-                    break  # جرب الكلمة الجاية
+            if not images:
+                print(f"  ⚠️ مفيش نتائج لـ '{term}' — جاري تجربة التالي")
+                continue
 
-                # اختار عشوائي من أول 8 نتايج عشان التنوع
-                item    = random.choice(images[:min(8, len(images))])
-                img_url = item.get("original") or item.get("url") or item.get("link", "")
-                title   = item.get("title", "")
+            # اختار عشوائي من أول 8 نتايج عشان التنوع
+            # SerpHouse image fields: img_src / original / url / link
+            random.shuffle(images[:min(8, len(images))])
+            downloaded = False
+            for item in images[:min(8, len(images))]:
+                img_url = (item.get("img_src") or item.get("original")
+                           or item.get("url") or item.get("link", ""))
+                title_str = item.get("title", "")
 
                 if not img_url:
-                    print(f"  ⚠️ مفيش URL في النتيجة")
                     continue
 
-                print(f"  ⬇️ بيتحمل: {title[:50]} — {img_url[:60]}...")
-                img_r = requests.get(img_url, timeout=60,
-                                     headers={"User-Agent": "Mozilla/5.0"})
-                img_r.raise_for_status()
+                try:
+                    print(f"  ⬇️ بيتحمل: {title_str[:50]} — {img_url[:60]}...")
+                    img_r = requests.get(img_url, timeout=30,
+                                         headers={"User-Agent": "Mozilla/5.0"},
+                                         allow_redirects=True)
+                    img_r.raise_for_status()
 
-                if len(img_r.content) < 5000:
-                    print(f"  ⚠️ صورة صغيرة جداً — retry")
+                    if len(img_r.content) < 5000:
+                        print(f"  ⚠️ صورة صغيرة جداً — بيجرب الجاية")
+                        continue
+
+                    from io import BytesIO
+                    test_img = Image.open(BytesIO(img_r.content))
+                    test_img.verify()
+
+                    with open(img_path, "wb") as f:
+                        f.write(img_r.content)
+                    print(f"  ✅ صورة {label} جاهزة")
+                    return img_path
+
+                except Exception as dl_err:
+                    print(f"  ⚠️ تحميل فشل: {dl_err}")
                     continue
 
-                # نتأكد إنها صورة صحيحة قبل نحفظها
-                from io import BytesIO
-                test_img = Image.open(BytesIO(img_r.content))
-                test_img.verify()
+            # لو كل الصور في هذا الـ term فشلت، جرب التالي
+            print(f"  ⚠️ كل صور '{term}' فشلت في التحميل — جاري تجربة التالي")
 
-                with open(img_path, "wb") as f:
-                    f.write(img_r.content)
-                print(f"  ✅ صورة {label} جاهزة")
-                return img_path
-
-            except Exception as e:
-                print(f"  ⚠️ محاولة {attempt+1} فشلت ({term}): {e}")
-                time.sleep(2)
+        except Exception as e:
+            print(f"  ⚠️ SerpHouse خطأ ({term}): {e}")
+            time.sleep(1)
 
     print(f"  ❌ صورة {label} فشلت — fallback")
     return _fallback_background(str(keyword), int(style_index))
