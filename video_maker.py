@@ -253,56 +253,35 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 
 
 # ==============================
-#  توليد صور الخلفية عن طريق Wikimedia API
+#  توليد صور الخلفية عن طريق Pollinations AI
 # ==============================
 
-_wikimedia_last_request = 0.0
-
-def _search_wikimedia_image(query: str) -> str:
-    """يبحث في Wikimedia Commons ويرجع URL صورة صحيح 100%."""
-    global _wikimedia_last_request
-
-    # rate limiting - ثانيتين بين كل طلب
-    elapsed = time.time() - _wikimedia_last_request
-    if elapsed < 2.0:
-        time.sleep(2.0 - elapsed)
-
-    try:
-        params = {
-            "action": "query",
-            "generator": "search",
-            "gsrnamespace": "6",
-            "gsrsearch": query + " filetype:bitmap",
-            "gsrlimit": "15",
-            "prop": "imageinfo",
-            "iiprop": "url|size|mime",
-            "format": "json",
-        }
-        r = requests.get(
-            "https://commons.wikimedia.org/w/api.php",
-            params=params,
-            headers={"User-Agent": "VideoBot/1.0 (educational project)"},
-            timeout=15
-        )
-        _wikimedia_last_request = time.time()
-        r.raise_for_status()
-        pages = r.json().get("query", {}).get("pages", {})
-        for page in pages.values():
-            info = page.get("imageinfo", [{}])[0]
-            mime = info.get("mime", "")
-            url  = info.get("thumburl") or info.get("url", "")
-            w    = info.get("thumbwidth", 0) or info.get("width", 0)
-            h    = info.get("thumbheight", 0) or info.get("height", 0)
-            if url and mime in ("image/jpeg", "image/png", "image/webp") and w >= 400 and h >= 300:
-                return url
-    except Exception as e:
-        _wikimedia_last_request = time.time()
-        print(f"  ⚠️ Wikimedia خطأ: {e}")
-    return ""
+def _generate_pollinations_image(prompt: str, img_path: str, width: int = VIDEO_WIDTH, height: int = VIDEO_HEIGHT) -> bool:
+    """يولد صورة من Pollinations AI ويحفظها."""
+    import urllib.parse
+    encoded = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&nologo=true&model=flux"
+    for attempt in range(3):
+        try:
+            print(f"  🎨 Pollinations: بيولد صورة (محاولة {attempt+1})...")
+            r = requests.get(url, timeout=60, allow_redirects=True)
+            if r.status_code == 200 and len(r.content) > 3000:
+                from io import BytesIO
+                pil_img = Image.open(BytesIO(r.content)).convert("RGB")
+                pil_img.save(img_path, "JPEG", quality=90)
+                print(f"  ✅ Pollinations: صورة جاهزة {pil_img.size}")
+                return True
+            else:
+                print(f"  ⚠️ Pollinations: status {r.status_code} — retry")
+                time.sleep(3)
+        except Exception as e:
+            print(f"  ⚠️ Pollinations خطأ: {e} — retry")
+            time.sleep(3)
+    return False
 
 
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب صورة من Wikimedia Commons عن طريق keyword من Mistral."""
+    """يولد صورة عبر Pollinations AI بناءً على keyword."""
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
     img_path = os.path.join(IMAGES_DIR, f"scene_{scene_index}_{safe}.jpg")
@@ -312,51 +291,11 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         return img_path
 
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
+    print(f"  🎨 صورة {label}: بيولد عبر Pollinations...")
 
-    # نجرب الـ keyword الكامل، ثم أول 3 كلمات، ثم أول كلمة
-    search_terms = list(dict.fromkeys([
-        keyword,
-        " ".join(keyword.split()[:3]),
-        keyword.split()[0],
-    ]))
-
-    dl_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://commons.wikimedia.org/",
-    }
-
-    for term in search_terms:
-        print(f"  🔍 صورة {label}: بيبحث عن '{term}' في Wikimedia...")
-        img_url = _search_wikimedia_image(term)
-        if not img_url:
-            print(f"  ⚠️ مفيش نتيجة لـ '{term}'")
-            continue
-
-        try:
-            print(f"  ⬇️ بيتحمل: {img_url[:80]}...")
-            img_r = requests.get(img_url, timeout=30, headers=dl_headers, allow_redirects=True)
-            if img_r.status_code != 200 or len(img_r.content) < 3000:
-                continue
-
-            from io import BytesIO
-            pil_img = Image.open(BytesIO(img_r.content)).convert("RGB")
-            w, h = pil_img.size
-            if w < 200 or h < 200:
-                continue
-
-            if w < VIDEO_WIDTH or h < VIDEO_HEIGHT:
-                pil_img = pil_img.resize(
-                    (max(w, VIDEO_WIDTH), max(h, VIDEO_HEIGHT)),
-                    Image.LANCZOS
-                )
-
-            pil_img.save(img_path, "JPEG", quality=90)
-            print(f"  ✅ صورة {label} جاهزة ({pil_img.size})")
-            return img_path
-
-        except Exception as e:
-            print(f"  ⚠️ تحميل فشل: {e}")
-            continue
+    success = _generate_pollinations_image(keyword, img_path)
+    if success:
+        return img_path
 
     print(f"  ❌ صورة {label} فشلت — fallback")
     return _fallback_background(str(keyword), int(style_index))
