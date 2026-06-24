@@ -253,16 +253,46 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 
 
 # ==============================
-#  توليد صور الخلفية عن طريق Mistral
+#  توليد صور الخلفية عن طريق Wikimedia API
 # ==============================
 
+def _search_wikimedia_image(query: str) -> str:
+    """يبحث في Wikimedia Commons ويرجع URL صورة صحيح 100%."""
+    try:
+        params = {
+            "action": "query",
+            "generator": "search",
+            "gsrnamespace": "6",  # File namespace
+            "gsrsearch": query + " filetype:bitmap",
+            "gsrlimit": "15",
+            "prop": "imageinfo",
+            "iiprop": "url|size|mime",
+            "iiurlwidth": "1920",
+            "format": "json",
+        }
+        r = requests.get(
+            "https://commons.wikimedia.org/w/api.php",
+            params=params,
+            headers={"User-Agent": "VideoBot/1.0 (educational project)"},
+            timeout=15
+        )
+        r.raise_for_status()
+        pages = r.json().get("query", {}).get("pages", {})
+        for page in pages.values():
+            info = page.get("imageinfo", [{}])[0]
+            mime = info.get("mime", "")
+            url  = info.get("thumburl") or info.get("url", "")
+            w    = info.get("thumbwidth", 0) or info.get("width", 0)
+            h    = info.get("thumbheight", 0) or info.get("height", 0)
+            if url and "image" in mime and w >= 400 and h >= 300:
+                return url
+    except Exception as e:
+        print(f"  ⚠️ Wikimedia خطأ: {e}")
+    return ""
+
+
 def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
-    """يجيب URLs صور من Mistral زي ما بنجيب القصة بالظبط."""
-    import json, re
-    from config import MISTRAL_API_KEY
-
-    MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-
+    """يجيب صورة من Wikimedia Commons عن طريق keyword من Mistral."""
     os.makedirs(IMAGES_DIR, exist_ok=True)
     safe = "".join(c if c.isalnum() else "_" for c in str(keyword))[:40]
     img_path = os.path.join(IMAGES_DIR, f"scene_{scene_index}_{safe}.jpg")
@@ -272,79 +302,51 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
         return img_path
 
     label = scene_index if isinstance(scene_index, str) else scene_index + 1
-    print(f"  🤖 صورة {label}: بيطلب من Mistral عن '{keyword}'...")
 
-    prompt = f"""You are a Google image search expert.
-For this topic: "{keyword}"
-Give me 8 direct image URLs from the web that show this topic clearly.
+    # نجرب الـ keyword الكامل، ثم أول 3 كلمات، ثم أول كلمة
+    search_terms = list(dict.fromkeys([
+        keyword,
+        " ".join(keyword.split()[:3]),
+        keyword.split()[0],
+    ]))
 
-Rules:
-- Real working URLs ending in .jpg, .jpeg, .png, or .webp
-- High quality photos, not illustrations
-- From reliable sources (wikimedia, nasa.gov, nationalgeographic.com, etc.)
-
-Reply with JSON ONLY — a list of exactly 8 URL strings:
-["https://...", "https://...", ...]
-No explanation, no markdown, just the JSON array."""
-
-    headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "mistral-small-2506",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,
-        "temperature": 0.3,
+    dl_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://commons.wikimedia.org/",
     }
 
-    try:
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"]
-        raw = re.sub(r"```json|```", "", raw).strip()
+    for term in search_terms:
+        print(f"  🔍 صورة {label}: بيبحث عن '{term}' في Wikimedia...")
+        img_url = _search_wikimedia_image(term)
+        if not img_url:
+            print(f"  ⚠️ مفيش نتيجة لـ '{term}'")
+            continue
 
-        match = re.search(r'\[.*?\]', raw, re.DOTALL)
-        if not match:
-            raise ValueError(f"Mistral ما رجعش URLs: {raw[:200]}")
-
-        urls = json.loads(match.group())
-        print(f"  🔗 Mistral رجّع {len(urls)} URL")
-
-        dl_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.google.com/",
-            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-        }
-        for img_url in urls:
-            try:
-                print(f"  ⬇️ بيتحمل: {img_url[:80]}...")
-                img_r = requests.get(img_url, timeout=20, headers=dl_headers, allow_redirects=True)
-                if img_r.status_code != 200 or len(img_r.content) < 3000:
-                    continue
-
-                from io import BytesIO
-                pil_img = Image.open(BytesIO(img_r.content)).convert("RGB")
-                w, h = pil_img.size
-                if w < 100 or h < 100:
-                    continue
-
-                if w < VIDEO_WIDTH or h < VIDEO_HEIGHT:
-                    pil_img = pil_img.resize(
-                        (max(w, VIDEO_WIDTH), max(h, VIDEO_HEIGHT)),
-                        Image.LANCZOS
-                    )
-
-                pil_img.save(img_path, "JPEG", quality=90)
-                print(f"  ✅ صورة {label} جاهزة ({pil_img.size})")
-                return img_path
-
-            except Exception as dl_err:
-                print(f"  ⚠️ تحميل فشل: {dl_err}")
+        try:
+            print(f"  ⬇️ بيتحمل: {img_url[:80]}...")
+            img_r = requests.get(img_url, timeout=30, headers=dl_headers, allow_redirects=True)
+            if img_r.status_code != 200 or len(img_r.content) < 3000:
                 continue
 
-    except Exception as e:
-        print(f"  ⚠️ Mistral خطأ: {e}")
+            from io import BytesIO
+            pil_img = Image.open(BytesIO(img_r.content)).convert("RGB")
+            w, h = pil_img.size
+            if w < 200 or h < 200:
+                continue
+
+            if w < VIDEO_WIDTH or h < VIDEO_HEIGHT:
+                pil_img = pil_img.resize(
+                    (max(w, VIDEO_WIDTH), max(h, VIDEO_HEIGHT)),
+                    Image.LANCZOS
+                )
+
+            pil_img.save(img_path, "JPEG", quality=90)
+            print(f"  ✅ صورة {label} جاهزة ({pil_img.size})")
+            return img_path
+
+        except Exception as e:
+            print(f"  ⚠️ تحميل فشل: {e}")
+            continue
 
     print(f"  ❌ صورة {label} فشلت — fallback")
     return _fallback_background(str(keyword), int(style_index))
