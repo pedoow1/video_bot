@@ -262,10 +262,10 @@ def _search_wikimedia_image(query: str) -> str:
     """يبحث في Wikimedia Commons ويرجع URL صورة صحيح 100%."""
     global _wikimedia_last_request
 
-    # rate limiting - ثانية بين كل طلب
+    # rate limiting - ثانيتين بين كل طلب
     elapsed = time.time() - _wikimedia_last_request
-    if elapsed < 1.0:
-        time.sleep(1.0 - elapsed)
+    if elapsed < 2.0:
+        time.sleep(2.0 - elapsed)
 
     try:
         params = {
@@ -276,7 +276,6 @@ def _search_wikimedia_image(query: str) -> str:
             "gsrlimit": "15",
             "prop": "imageinfo",
             "iiprop": "url|size|mime",
-            "iiurlwidth": "1920",
             "format": "json",
         }
         r = requests.get(
@@ -668,16 +667,28 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     output_path = os.path.join(VIDEO_DIR, output_filename)
 
     paragraphs    = story_data["story_paragraphs"]
-    bg_keyword    = story_data.get("bg_keyword", "dark mysterious forest")
-    mood          = story_data.get("mood", "mysterious")
+    bg_keyword    = story_data.get("bg_keyword", "dark")
+    mood          = story_data.get("mood", "epic")
     title         = story_data["title"]
-    scene_keywords = story_data.get("scene_keywords") or [bg_keyword] * len(paragraphs)
-    if len(scene_keywords) != len(paragraphs):
-        scene_keywords = [bg_keyword] * len(paragraphs)
 
     # ─── 1. صور الخلفية ───────────────────────────────────
-    print(f"🎨 توليد {len(paragraphs)} صورة...")
-    bg_images = [fetch_scene_image(scene_keywords[i], i, i) for i in range(len(paragraphs))]
+    print(f"🎨 تجهيز {len(paragraphs)} صورة...")
+    scene_image_paths = story_data.get("scene_image_paths", [])
+
+    # fallback لو مفيش صور من GPT-4o
+    if len(scene_image_paths) != len(paragraphs):
+        from video_maker import fetch_scene_image
+        scene_keywords = story_data.get("scene_keywords") or [bg_keyword] * len(paragraphs)
+        scene_image_paths = [fetch_scene_image(scene_keywords[i], i, i) for i in range(len(paragraphs))]
+
+    # لو في صور None (فشل تحميلها) نعمل fallback لكل واحدة
+    bg_images = []
+    for i, path in enumerate(scene_image_paths):
+        if path and os.path.exists(path) and os.path.getsize(path) > 3000:
+            bg_images.append(path)
+        else:
+            print(f"  ⚠️ مشهد {i+1}: مفيش صورة — fallback")
+            bg_images.append(_fallback_background(bg_keyword, i))
 
     # ─── 2. الموسيقى ──────────────────────────────────────
     music_path = fetch_background_music(mood)
