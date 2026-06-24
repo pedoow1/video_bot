@@ -175,29 +175,38 @@ No extra text, no markdown, just the JSON array."""
     payload = {
         "model": "mistral-small-2506",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,
+        "max_tokens": 15000,
         "temperature": 0.5,
     }
 
-    try:
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"]
-        raw = re.sub(r"```json|```", "", raw).strip()
-        prompts = json.loads(raw)
+    for attempt in range(3):
+        try:
+            response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            raw = re.sub(r"```json|```", "", raw).strip()
 
-        if isinstance(prompts, list) and len(prompts) == len(paragraphs):
-            print(f"✅ برومبتات الصور جاهزة ({len(prompts)} مشهد)")
-            for i, p in enumerate(prompts):
-                print(f"   حقيقة {i+1}: {p}")
-            return prompts
-        else:
-            print(f"⚠️ عدد البرومبتات غلط — fallback لـ bg_keyword")
-            return [bg_keyword] * len(paragraphs)
+            # لو الـ JSON اتقطع نحاول نصلحه
+            if not raw.rstrip().endswith("]"):
+                raw = raw.rstrip().rstrip(",") + "]"
 
-    except Exception as e:
-        print(f"⚠️ فشل توليد برومبتات الصور ({e}) — fallback لـ bg_keyword")
-        return [bg_keyword] * len(paragraphs)
+            prompts = json.loads(raw)
+
+            if isinstance(prompts, list) and len(prompts) == len(paragraphs):
+                print(f"✅ برومبتات الصور جاهزة ({len(prompts)} مشهد)")
+                for i, p in enumerate(prompts):
+                    print(f"   حقيقة {i+1}: {p}")
+                return prompts
+            else:
+                print(f"⚠️ محاولة {attempt+1}: رجع {len(prompts)} بدل {len(paragraphs)} — retry")
+                continue
+
+        except Exception as e:
+            print(f"⚠️ محاولة {attempt+1} فشلت: {e} — retry")
+            continue
+
+    print("❌ فشل توليد برومبتات الصور بعد 3 محاولات")
+    raise RuntimeError("generate_scene_image_prompts فشل — مش هنكمل")
 
 
 if __name__ == "__main__":
