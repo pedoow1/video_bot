@@ -74,7 +74,7 @@ Important: DO NOT include scene_keywords in this response — they will be gener
     payload = {
         "model": "mistral-small-2506",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 6000,
+        "max_tokens": 15000,
         "temperature": 0.7,
     }
 
@@ -86,7 +86,18 @@ Important: DO NOT include scene_keywords in this response — they will be gener
         raw = response.json()["choices"][0]["message"]["content"]
 
         raw = re.sub(r"```json|```", "", raw).strip()
-        data = json.loads(raw)
+        # تنظيف smart quotes وأي مشاكل في النص
+        raw = raw.replace("\u2018", "'").replace("\u2019", "'")
+        raw = raw.replace("\u201c", '"').replace("\u201d", '"')
+        # لو الـ JSON اتقطع، نحاول نصلحه
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # نحاول نكمل الـ JSON لو اتقطع
+            if not raw.rstrip().endswith("}"):
+                raw = raw.rstrip().rstrip(",") + "\n]}\n" if '"story_paragraphs"' in raw else raw + "\n}"
+            raw = re.sub(r',\s*([}\]])', r'\1', raw)  # إزالة trailing commas
+            data = json.loads(raw)
 
         if "full_story" not in data or not data["full_story"]:
             data["full_story"] = " ".join(data.get("story_paragraphs", []))
