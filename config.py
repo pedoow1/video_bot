@@ -13,10 +13,8 @@ FREESOUND_API_KEY = os.environ.get("FREESOUND_API_KEY", "")
 # Pexels API (قديم - مش بيستخدم)
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 
-# SerpHouse API - للصور (بديل Google Custom Search)
-# سجّل مجاناً من: https://serphouse.com
-# 5,000 credits شهرياً مجاناً بدون كارت
-SERPHOUSE_API_KEY = os.environ.get("SERPHOUSE_API_KEY", "")
+# GitHub Token - لاستخدام GPT-4o عبر GitHub Models
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 # YouTube Token - بييجي من GitHub Secret كـ JSON string
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN", "")
