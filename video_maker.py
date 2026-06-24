@@ -295,6 +295,7 @@ def fetch_scene_image(keyword: str, scene_index, style_index: int = 0) -> str:
                         "lang":      "en",
                         "device":    "desktop",
                         "serp_type": "image",
+                        "loc":       "United States",
                         "page":      "1",
                         "verbatim":  "0",
                     }
