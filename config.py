@@ -1,12 +1,17 @@
 # config.py
 
-# API Keys
-MISTRAL_API_KEY = "ILVFFVrVxU3Zt4JxVtYqAE7ZsXXjVeFI"
+import os
+
+# API Keys - بتيجي من GitHub Secrets أو environment variables
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 MISTRAL_MODEL   = "mistral-small-2506"
 STORY_MAX_WORDS = 600
 
 # Freesound API
-FREESOUND_API_KEY = "VpGovv94RUISeahonKXaYtxy1IOaL6JoS86bsAWP"
+FREESOUND_API_KEY = os.environ.get("FREESOUND_API_KEY", "")
+
+# YouTube Token - بييجي من GitHub Secret كـ JSON string
+YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN", "")
 
 # Video Settings
 VIDEO_WIDTH      = 1920
@@ -20,7 +25,7 @@ SHADOW_COLOR     = "black"
 IMAGE_DURATION   = 8
 
 # TTS - Edge-TTS (مجاني، بدون API key)
-TTS_VOICE    = "en-US-GuyNeural"   # صوت سرد عميق
+TTS_VOICE    = "en-US-GuyNeural"
 TTS_LANGUAGE = "en"
 TTS_SPEED    = 1.0
 
@@ -30,9 +35,9 @@ MUSIC_VOLUME       = 0.12
 MUSIC_FADE_SECONDS = 2.0
 
 # Sound Effects (Freesound)
-ENABLE_SFX      = True
-SFX_DIR         = "output/sfx"
-SFX_VOLUME      = 0.35
+ENABLE_SFX       = True
+SFX_DIR          = "output/sfx"
+SFX_VOLUME       = 0.35
 SFX_MAX_DURATION = 5.0
 
 # Schedule
