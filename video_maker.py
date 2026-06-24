@@ -19,9 +19,9 @@ import numpy as np
 from moviepy import (
     VideoFileClip, AudioFileClip, ImageClip, VideoClip,
     CompositeVideoClip, concatenate_videoclips,
-    TextClip, ColorClip
+    TextClip, ColorClip, CompositeAudioClip
 )
-from moviepy.video.fx.all import fadein, fadeout
+from moviepy.video.fx import FadeIn as fadein_fx, FadeOut as fadeout_fx
 
 from config import (
     VIDEO_WIDTH, VIDEO_HEIGHT, FPS,
@@ -32,8 +32,21 @@ from config import (
     FREESOUND_API_KEY
 )
 
-from moviepy.audio.AudioClip import CompositeAudioClip
-from moviepy.audio.fx.all import audio_loop, volumex
+def fadein(clip, duration):
+    return fadein_fx(duration).apply(clip)
+
+def fadeout(clip, duration):
+    return fadeout_fx(duration).apply(clip)
+
+def audio_loop(clip, duration):
+    import math
+    n = math.ceil(duration / clip.duration)
+    from moviepy import concatenate_audioclips
+    looped = concatenate_audioclips([clip] * n)
+    return looped.subclipped(0, duration)
+
+def volumex(clip, factor):
+    return clip.with_multiply_volume(factor)
 
 
 # ==============================
@@ -214,9 +227,9 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
         try:
             music = AudioFileClip(music_path)
             music = audio_loop(music, duration=total_duration) if music.duration < total_duration \
-                    else music.subclip(0, total_duration)
+                    else music.subclipped(0, total_duration)
             music = volumex(music, MUSIC_VOLUME)
-            music = music.audio_fadein(MUSIC_FADE_SECONDS).audio_fadeout(MUSIC_FADE_SECONDS)
+            music = music.with_audio_fadein(MUSIC_FADE_SECONDS).with_audio_fadeout(MUSIC_FADE_SECONDS)
             layers.append(music)
         except Exception as e:
             print(f"  ⚠️ فشل دمج الموسيقى: {e}")
@@ -227,10 +240,10 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
         try:
             sfx = AudioFileClip(sfx_path)
             usable = min(sfx.duration, scene_dur)
-            sfx = sfx.subclip(0, usable)
+            sfx = sfx.subclipped(0, usable)
             sfx = volumex(sfx, SFX_VOLUME)
-            sfx = sfx.audio_fadeout(min(0.3, usable / 2))
-            sfx = sfx.set_start(start_time)
+            sfx = sfx.with_audio_fadeout(min(0.3, usable / 2))
+            sfx = sfx.with_start(start_time)
             layers.append(sfx)
         except Exception as e:
             print(f"  ⚠️ فشل SFX: {e}")
@@ -424,7 +437,7 @@ def _make_motion_clip(img_path: str, duration: float, motion: str = None) -> Ima
             return arr[0:H, 0:W]
 
     clip = VideoClip(make_frame, duration=duration)
-    clip = clip.set_fps(FPS)
+    clip = clip.with_fps(FPS)
     return clip
 
 
@@ -509,9 +522,9 @@ def _build_subtitle_clips(subtitle_lines: list, scene_start: float,
             sub_img.save(sub_path)
 
             sub_clip = (ImageClip(sub_path, ismask=False)
-                        .set_start(rel_start)
-                        .set_duration(duration)
-                        .set_position(("center", VIDEO_HEIGHT - 130)))
+                        .with_start(rel_start)
+                        .with_duration(duration)
+                        .with_position(("center", VIDEO_HEIGHT - 130)))
             clips.append(sub_clip)
 
         except Exception as e:
@@ -704,8 +717,8 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
 
     # ─── 9. دمج الصوت ─────────────────────────────────────
     final_audio = mix_full_audio(audio_clip, music_path, sfx_entries, total_duration)
-    final_video = final_video.set_audio(final_audio)
-    final_video = final_video.set_duration(total_duration)
+    final_video = final_video.with_audio(final_audio)
+    final_video = final_video.with_duration(total_duration)
 
     # ─── 10. تصدير ────────────────────────────────────────
     print(f"💾 تصدير → {output_path}")
