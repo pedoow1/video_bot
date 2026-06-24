@@ -256,13 +256,22 @@ def mix_full_audio(narration_clip, music_path: str, sfx_entries: list, total_dur
 #  توليد صور الخلفية عن طريق Wikimedia API
 # ==============================
 
+_wikimedia_last_request = 0.0
+
 def _search_wikimedia_image(query: str) -> str:
     """يبحث في Wikimedia Commons ويرجع URL صورة صحيح 100%."""
+    global _wikimedia_last_request
+
+    # rate limiting - ثانية بين كل طلب
+    elapsed = time.time() - _wikimedia_last_request
+    if elapsed < 1.0:
+        time.sleep(1.0 - elapsed)
+
     try:
         params = {
             "action": "query",
             "generator": "search",
-            "gsrnamespace": "6",  # File namespace
+            "gsrnamespace": "6",
             "gsrsearch": query + " filetype:bitmap",
             "gsrlimit": "15",
             "prop": "imageinfo",
@@ -276,6 +285,7 @@ def _search_wikimedia_image(query: str) -> str:
             headers={"User-Agent": "VideoBot/1.0 (educational project)"},
             timeout=15
         )
+        _wikimedia_last_request = time.time()
         r.raise_for_status()
         pages = r.json().get("query", {}).get("pages", {})
         for page in pages.values():
@@ -284,9 +294,10 @@ def _search_wikimedia_image(query: str) -> str:
             url  = info.get("thumburl") or info.get("url", "")
             w    = info.get("thumbwidth", 0) or info.get("width", 0)
             h    = info.get("thumbheight", 0) or info.get("height", 0)
-            if url and "image" in mime and w >= 400 and h >= 300:
+            if url and mime in ("image/jpeg", "image/png", "image/webp") and w >= 400 and h >= 300:
                 return url
     except Exception as e:
+        _wikimedia_last_request = time.time()
         print(f"  ⚠️ Wikimedia خطأ: {e}")
     return ""
 
