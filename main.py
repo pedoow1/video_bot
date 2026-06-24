@@ -5,7 +5,7 @@ import time
 import schedule
 import argparse
 from datetime import datetime
-from story_generator  import generate_story
+from story_generator  import generate_story, generate_scene_image_prompts
 from tts_engine       import text_to_speech_paragraphs
 from video_maker      import create_video, create_thumbnail, fetch_background_images
 from youtube_uploader import upload_video
@@ -28,13 +28,22 @@ def run_pipeline(topic: str = None):
         story = generate_story(topic)
         print(f"   العنوان: {story['title']}")
 
-        # ─── الخطوة 2: تحويل النص لصوت (كل فقرة لوحدها، عشان نقيس المدة الحقيقية) ──
+        # ─── الخطوة 2: تحويل النص لصوت ──────────────────
         print("\n🎙️ [2/4] تحويل النص لصوت...")
         audio_filename = f"audio_{timestamp}.wav"
         audio_info     = text_to_speech_paragraphs(story["story_paragraphs"], audio_filename)
         audio_path     = audio_info["audio_path"]
         duration       = audio_info["total_duration"]
         print(f"   مدة الصوت: {duration:.0f} ثانية ({duration/60:.1f} دقيقة)")
+
+        # ─── الخطوة 2.5: توليد برومبتات الصور (بعد TTS) ─
+        print("\n🎨 [2.5/4] توليد برومبتات الصور لكل مشهد...")
+        scene_keywords = generate_scene_image_prompts(
+            story["story_paragraphs"],
+            story["title"],
+            story.get("bg_keyword", "space")
+        )
+        story["scene_keywords"] = scene_keywords
 
         # ─── الخطوة 3: صناعة الفيديو ──────────────────────
         print("\n🎬 [3/4] صناعة الفيديو...")
@@ -59,9 +68,7 @@ def run_pipeline(topic: str = None):
         print(f"  🔗 https://youtube.com/watch?v={video_id}")
         print("="*55 + "\n")
 
-        # حفظ سجل الفيديوهات
         log_video(story, video_id, elapsed)
-
         return video_id
 
     except Exception as e:
@@ -105,45 +112,32 @@ def setup_scheduler():
         time.sleep(60)
 
 
-# ==============================
-#  CLI
-# ==============================
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Story Video Bot 🎬")
 
-    parser.add_argument(
-        "--now",
-        action="store_true",
-        help="اعمل وانشر فيديو دلوقتي"
-    )
-    parser.add_argument(
-        "--topic",
-        type=str,
-        default=None,
-        help='موضوع القصة (مثال: --topic "قصة رعب في الصحراء")'
-    )
-    parser.add_argument(
-        "--schedule",
-        action="store_true",
-        help="شغّل الجدول الأوتوماتيك اليومي"
-    )
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="اختبار بدون رفع YouTube"
-    )
+    parser.add_argument("--now", action="store_true", help="اعمل وانشر فيديو دلوقتي")
+    parser.add_argument("--topic", type=str, default=None, help='موضوع القصة')
+    parser.add_argument("--schedule", action="store_true", help="شغّل الجدول الأوتوماتيك اليومي")
+    parser.add_argument("--test", action="store_true", help="اختبار بدون رفع YouTube")
 
     args = parser.parse_args()
 
     if args.test:
-        # اختبار القصة والفيديو بس بدون رفع
         print("🧪 وضع الاختبار (بدون رفع)\n")
         story      = generate_story(args.topic)
         audio_info = text_to_speech_paragraphs(story["story_paragraphs"], "test_audio.wav")
-        video      = create_video(story, audio_info["audio_path"], "test_video.mp4",
-                                   scene_durations=audio_info["durations"],
-                                   word_timings=audio_info.get("word_timings", []))
+
+        print("\n🎨 توليد برومبتات الصور...")
+        scene_keywords = generate_scene_image_prompts(
+            story["story_paragraphs"],
+            story["title"],
+            story.get("bg_keyword", "space")
+        )
+        story["scene_keywords"] = scene_keywords
+
+        video = create_video(story, audio_info["audio_path"], "test_video.mp4",
+                              scene_durations=audio_info["durations"],
+                              word_timings=audio_info.get("word_timings", []))
         print(f"\n✅ الفيديو جاهز: {video}")
 
     elif args.now:
@@ -156,6 +150,6 @@ if __name__ == "__main__":
         parser.print_help()
         print("\n💡 أمثلة:")
         print('  python main.py --now')
-        print('  python main.py --now --topic "قصة غموض في القاهرة"')
+        print('  python main.py --now --topic "10 facts about Mars"')
         print('  python main.py --schedule')
         print('  python main.py --test')
