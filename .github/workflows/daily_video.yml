@@ -8,7 +8,7 @@ on:
 jobs:
   make-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90   # زدنا الوقت عشان التحميل
 
     steps:
       - name: 📥 Checkout repo
@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 🦕 Install Deno (required by yt-dlp for YouTube search)
+      - name: 🦕 Install Deno (required by yt-dlp)
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
@@ -31,7 +31,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "curl_cffi>=0.10,<0.15"
+          pip install "curl_cffi>=0.10,<0.15" requests
 
       - name: 🎥 Install yt-dlp
         run: |
@@ -50,10 +50,12 @@ jobs:
 
       - name: 🚀 Run Video Bot
         env:
-          MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
-          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
-          YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
-          GH_TOKEN:          ${{ secrets.GH_TOKEN }}
+          MISTRAL_API_KEY:    ${{ secrets.MISTRAL_API_KEY }}
+          FREESOUND_API_KEY:  ${{ secrets.FREESOUND_API_KEY }}
+          YOUTUBE_API_KEY:    ${{ secrets.YOUTUBE_API_KEY }}     # ← مهم
+          YOUTUBE_TOKEN:      ${{ secrets.YOUTUBE_TOKEN }}
+          GH_TOKEN:           ${{ secrets.GH_TOKEN }}
+          PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
         run: python main.py --cats
 
       - name: 📋 Upload log artifact
