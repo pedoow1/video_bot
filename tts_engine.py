@@ -36,6 +36,7 @@ async def _synthesize_with_timings(text: str, out_path: str, voice: str = EDGE_T
     """
     يولّد الصوت ويجمع word timings في نفس الـ stream.
     يرجع list من (word, start_sec, end_sec).
+    لو WordBoundary مرجعتش، يولد timings تقريبية من مدة الصوت.
     """
     import edge_tts
 
@@ -48,7 +49,7 @@ async def _synthesize_with_timings(text: str, out_path: str, voice: str = EDGE_T
             audio_chunks.append(event["data"])
         elif event["type"] == "WordBoundary":
             word  = event["text"]
-            start = event["offset"]   / 10_000_000   # 100ns → seconds
+            start = event["offset"]   / 10_000_000
             dur   = event["duration"] / 10_000_000
             word_timings.append((word, start, start + dur))
 
@@ -56,6 +57,27 @@ async def _synthesize_with_timings(text: str, out_path: str, voice: str = EDGE_T
     with open(out_path, "wb") as f:
         for chunk in audio_chunks:
             f.write(chunk)
+
+    # لو WordBoundary مرجعتش — نولد timings تقريبية
+    if not word_timings and os.path.exists(out_path):
+        print("  ⚠️ WordBoundary مرجعتش — بيولد timings تقريبية...")
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", out_path],
+            capture_output=True, text=True
+        )
+        try:
+            total_dur = float(result.stdout.strip())
+        except Exception:
+            total_dur = len(text.split()) * 0.35
+
+        words = text.split()
+        if words:
+            dur_per_word = total_dur / len(words)
+            for i, word in enumerate(words):
+                start = i * dur_per_word
+                word_timings.append((word, start, start + dur_per_word))
+            print(f"  ✅ timings تقريبية: {len(word_timings)} كلمة")
 
     return word_timings
 
@@ -148,6 +170,11 @@ def text_to_speech_paragraphs(paragraphs: list, base_filename: str = "audio") ->
         paragraph_paths.append(p_path)
         durations.append(d)
 
+        if not timings:
+            print(f"     ⚠️ فقرة {i+1}: مفيش word timings — subtitles مش هتظهر لهذه الفقرة")
+        else:
+            print(f"     ⏱️ {d:.1f}s — {len(timings)} كلمة ✅")
+
         # تحويل timing من relative → absolute
         for word, rel_start, rel_end in timings:
             all_word_timings.append((word,
@@ -155,7 +182,6 @@ def text_to_speech_paragraphs(paragraphs: list, base_filename: str = "audio") ->
                                      rel_end   + cumulative_offset))
 
         cumulative_offset += d
-        print(f"     ⏱️ {d:.1f}s — {len(timings)} كلمة")
 
     # دمج ملفات الصوت
     if base_filename.lower().endswith((".wav", ".mp3")):
