@@ -2,7 +2,7 @@ name: 🎬 Daily Video Bot
 
 on:
   schedule:
-    - cron: '0 17 * * *'     # يومياً الساعة 5 مساءً UTC
+    - cron: '0 17 * * *'
   workflow_dispatch:
 
 jobs:
@@ -19,12 +19,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 🎥 Install FFmpeg & yt-dlp
+      - name: 🎥 Install FFmpeg & yt-dlp (Latest)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
+          yt-dlp --version
 
       - name: 🔑 Load YouTube Cookies
         uses: AnimMouse/setup-yt-dlp/cookies@v3
@@ -37,4 +38,5 @@ jobs:
       - name: 🚀 Run Video Fetcher & Uploader
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          # YOUTUBE_API_KEY لو كنت مستخدمه
         run: python main.py --now --cats
