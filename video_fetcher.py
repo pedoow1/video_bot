@@ -1,33 +1,34 @@
-# video_fetcher.py - جلب مقاطع حيوانات مضحكة من Pexels
+# video_fetcher.py - جلب مقاطع حيوانات مضحكة من يوتيوب بـ yt-dlp
 
 import os
 import random
 import subprocess
 import json
 import time
-import requests
+import re
 from config import OUTPUT_DIR
 
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION = 4.0
-CLIP_MAX_DURATION = 30.0   # زدنا من 15 لـ 30 عشان نوصل 5 دقايق
+CLIP_MAX_DURATION = 30.0
 
 TARGET_VIDEO_DURATION = 300  # 5 دقايق = 300 ثانية
 
-PEXELS_QUERIES = [
-    "funny animal",
-    "cute dog funny",
-    "funny cat",
-    "funny bird",
-    "funny monkey",
-    "cute kitten",
-    "funny raccoon",
-    "funny panda",
-    "animal fail funny",
-    "funny pet video",
+# كلمات بحث يوتيوب
+YOUTUBE_QUERIES = [
+    "funny animals compilation",
+    "funny cats and dogs",
+    "cute funny animals",
+    "funny animal moments",
+    "hilarious animals",
+    "funny pets compilation",
+    "cute kittens funny",
+    "funny dogs fails",
     "animals being silly",
-    "funny wildlife",
+    "funny wildlife moments",
+    "cute baby animals funny",
+    "funny raccoon videos",
 ]
 
 
@@ -75,108 +76,173 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
     return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10_000
 
 
+def _sanitize_id(video_id: str) -> str:
+    """يطهر الـ video ID عشان يكون اسم ملف آمن"""
+    return re.sub(r'[^a-zA-Z0-9_\-]', '_', video_id)
+
+
 # ──────────────────────────────────────────
-# Pexels - يرجع list of dicts مع description
+# yt-dlp search & download
 # ──────────────────────────────────────────
 
-def _fetch_from_pexels(count: int, clip_duration: float) -> list:
+def _search_youtube(query: str, max_results: int = 20) -> list:
     """
-    يرجع list of dicts:
-      { "path": str, "description": str, "pexels_url": str }
+    يبحث يوتيوب بـ yt-dlp ويرجع list of dicts:
+      { "id": str, "url": str, "title": str, "duration": int }
     """
-    api_key = os.environ.get("PEXELS_API_KEY", "")
-    if not api_key:
-        print("  ⚠️ PEXELS_API_KEY مش موجود!")
+    try:
+        search_url = f"ytsearch{max_results}:{query}"
+        cmd = [
+            "yt-dlp",
+            "--dump-json",
+            "--no-playlist",
+            "--match-filter", "duration > 10 & duration < 180",
+            "--quiet",
+            search_url,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0 and not r.stdout.strip():
+            print(f"  ⚠️ yt-dlp بحث فشل ({query}): {r.stderr[:100]}")
+            return []
+
+        results = []
+        for line in r.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                info = json.loads(line)
+                dur = info.get("duration", 0) or 0
+                if dur < CLIP_MIN_DURATION or dur > 180:
+                    continue
+                results.append({
+                    "id":       info.get("id", ""),
+                    "url":      info.get("webpage_url", f"https://www.youtube.com/watch?v={info.get('id','')}"),
+                    "title":    info.get("title", query),
+                    "duration": dur,
+                })
+            except json.JSONDecodeError:
+                continue
+        return results
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ yt-dlp انتهت المهلة ({query})")
+        return []
+    except Exception as e:
+        print(f"  ⚠️ yt-dlp خطأ ({query}): {e}")
         return []
 
-    print(f"  🎬 Pexels — جاري جلب {count} فيديو...")
-    clips = []
-    headers = {"Authorization": api_key}
 
-    queries = random.sample(PEXELS_QUERIES, min(len(PEXELS_QUERIES), 4))
+def _download_video(url: str, video_id: str) -> str | None:
+    """
+    يحمل الفيديو بـ yt-dlp ويرجع المسار المؤقت، أو None لو فشل
+    """
+    safe_id = _sanitize_id(video_id)
+    tmp_path = os.path.join(CLIPS_DIR, f"_tmp_{safe_id}.mp4")
+
+    # لو موجود مسبقاً
+    if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 10_000:
+        return tmp_path
+
+    cmd = [
+        "yt-dlp",
+        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "--quiet",
+        "-o", tmp_path,
+        url,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        if r.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 10_000:
+            return tmp_path
+        else:
+            print(f"  ⚠️ تحميل فشل: {r.stderr[:100] if r.stderr else 'unknown'}")
+            return None
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ انتهت مهلة التحميل ({video_id})")
+        return None
+    except Exception as e:
+        print(f"  ⚠️ خطأ في التحميل ({video_id}): {e}")
+        return None
+
+
+# ──────────────────────────────────────────
+# Main YouTube fetcher
+# ──────────────────────────────────────────
+
+def _fetch_from_youtube(count: int, clip_duration: float) -> list:
+    """
+    يرجع list of dicts:
+      { "path": str, "description": str, "youtube_url": str }
+    """
+    print(f"  🎬 YouTube — جاري البحث عن {count} فيديو...")
+    clips = []
+
+    # اختار queries عشوائية
+    queries = random.sample(YOUTUBE_QUERIES, min(len(YOUTUBE_QUERIES), 4))
     all_videos = []
 
     for q in queries:
-        try:
-            r = requests.get(
-                "https://api.pexels.com/videos/search",
-                headers=headers,
-                params={"query": q, "per_page": 20, "size": "medium"},
-                timeout=15,
-            )
-            if r.status_code != 200:
-                print(f"  ⚠️ Pexels رد {r.status_code} على ({q})")
-                continue
-            for v in r.json().get("videos", []):
-                dur = v.get("duration", 0)
-                if dur < CLIP_MIN_DURATION or dur > 120:
-                    continue
-                files = sorted(
-                    [f for f in v["video_files"] if f.get("width", 9999) <= 1280],
-                    key=lambda f: f.get("width", 0),
-                    reverse=True,
-                )
-                if not files:
-                    files = v["video_files"]
-                best = files[0]
+        print(f"  🔍 بحث: {q}")
+        videos = _search_youtube(q, max_results=15)
+        print(f"     وجدنا {len(videos)} نتيجة")
+        all_videos.extend(videos)
+        time.sleep(0.5)  # تأخير خفيف
 
-                # بناء الـ description من بيانات Pexels
-                user_name = v.get("user", {}).get("name", "unknown")
-                pexels_url = v.get("url", "")
-                # description من الـ URL slug أو الـ query
-                description = f"{q} video (Pexels by {user_name})"
+    # إزالة المكررات بالـ ID
+    seen = set()
+    unique_videos = []
+    for v in all_videos:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            unique_videos.append(v)
 
-                all_videos.append({
-                    "url":         best["link"],
-                    "id":          f"pexels_{v['id']}",
-                    "duration":    dur,
-                    "description": description,
-                    "pexels_url":  pexels_url,
-                })
-        except Exception as e:
-            print(f"  ⚠️ Pexels بحث فشل ({q}): {e}")
+    random.shuffle(unique_videos)
+    print(f"  📋 إجمالي فيديوهات فريدة: {len(unique_videos)}")
 
-    random.shuffle(all_videos)
-
-    for video in all_videos:
+    for video in unique_videos:
         if len(clips) >= count:
             break
-        clip_path = os.path.join(CLIPS_DIR, f"{video['id']}.mp4")
-        tmp = os.path.join(CLIPS_DIR, f"_tmp_{video['id']}.mp4")
 
+        safe_id = _sanitize_id(video["id"])
+        clip_path = os.path.join(CLIPS_DIR, f"yt_{safe_id}.mp4")
+
+        # لو الكليب موجود مسبقاً
         if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             clips.append({
-                "path":        clip_path,
-                "description": video["description"],
-                "pexels_url":  video["pexels_url"],
+                "path":         clip_path,
+                "description":  video["title"],
+                "youtube_url":  video["url"],
             })
+            print(f"  ✅ كاش [{len(clips)}/{count}]: {video['title'][:50]}")
             continue
 
-        try:
-            print(f"  ⬇️ Pexels [{len(clips)+1}/{count}] {video['id']}...")
-            r = requests.get(video["url"], stream=True, timeout=60)
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 64):
-                    f.write(chunk)
+        print(f"  ⬇️ [{len(clips)+1}/{count}] {video['title'][:50]}...")
 
-            dur = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
-            if _cut_clip(tmp, clip_path, dur):
-                print(f"  ✅ Pexels جاهز ({os.path.getsize(clip_path)//1024} KB)")
-                clips.append({
-                    "path":        clip_path,
-                    "description": video["description"],
-                    "pexels_url":  video["pexels_url"],
-                })
-            else:
-                print(f"  ⚠️ Pexels cut فشل")
-        except Exception as e:
-            print(f"  ⚠️ Pexels تحميل فشل: {e}")
-        finally:
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+        # تحميل
+        tmp_path = _download_video(video["url"], video["id"])
+        if not tmp_path:
+            continue
+
+        # قطع الكليب
+        dur = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
+        if _cut_clip(tmp_path, clip_path, dur):
+            size_kb = os.path.getsize(clip_path) // 1024
+            print(f"  ✅ جاهز ({size_kb} KB)")
+            clips.append({
+                "path":         clip_path,
+                "description":  video["title"],
+                "youtube_url":  video["url"],
+            })
+        else:
+            print(f"  ⚠️ قطع الكليب فشل")
+
+        # حذف الملف المؤقت
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     return clips
 
@@ -188,13 +254,13 @@ def _fetch_from_pexels(count: int, clip_duration: float) -> list:
 def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     """
     يرجع list of dicts:
-      { "path": str, "description": str, "pexels_url": str }
+      { "path": str, "description": str, "youtube_url": str }
 
     clip_duration: لو None بيحسبها تلقائياً عشان الفيديو كله يوصل TARGET_VIDEO_DURATION
     """
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
-    # حساب مدة كل كليب عشان الفيديو كله يوصل 5 دقايق
+    # حساب مدة كل كليب
     if clip_duration is None:
         clip_duration = TARGET_VIDEO_DURATION / count
         clip_duration = min(clip_duration, CLIP_MAX_DURATION)
@@ -208,9 +274,9 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     clips = list(existing)
     needed = count - len(clips)
 
-    print(f"🐱 جاري جلب {needed} مقطع من Pexels...")
-    pexels_clips = _fetch_from_pexels(needed, clip_duration)
-    clips.extend(pexels_clips)
+    print(f"🎥 جاري جلب {needed} مقطع من YouTube...")
+    yt_clips = _fetch_from_youtube(needed, clip_duration)
+    clips.extend(yt_clips)
 
     # كرر لو لسه ناقص
     if 0 < len(clips) < count:
@@ -233,9 +299,9 @@ def _get_existing_clips() -> list:
             full_path = os.path.join(CLIPS_DIR, f)
             if os.path.getsize(full_path) > 10_000:
                 clips.append({
-                    "path":        full_path,
-                    "description": f"cached clip: {f}",
-                    "pexels_url":  "",
+                    "path":         full_path,
+                    "description":  f"cached clip: {f}",
+                    "youtube_url":  "",
                 })
     random.shuffle(clips)
     return clips
@@ -256,7 +322,7 @@ def clear_clips_cache():
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار fetcher...\n")
+    print("🧪 اختبار YouTube fetcher...\n")
     clips = fetch_cat_clips(count=3)
     print(f"\n✅ ({len(clips)}):")
     for c in clips:
