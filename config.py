@@ -42,7 +42,7 @@ MUSIC_VOLUME       = 0.12
 MUSIC_FADE_SECONDS = 2.0
 
 # Sound Effects (Freesound)
-ENABLE_SFX       = True
+ENABLE_SFX       = False
 SFX_DIR          = "output/sfx"
 SFX_VOLUME       = 0.35
 SFX_MAX_DURATION = 5.0
