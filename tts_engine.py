@@ -160,34 +160,78 @@ def text_to_speech_paragraphs(paragraphs: list, base_filename: str = "audio") ->
 
     cumulative_offset = 0.0
 
+    # حساب مدة الـ silence للمشاهد الفاضية (لو عندنا فقرات فاضية)
+    # TARGET = 300 ثانية (5 دقايق)
+    TARGET_TOTAL = 300.0
+    silent_indices = [i for i, p in enumerate(paragraphs) if not p.strip()]
+    spoken_indices = [i for i, p in enumerate(paragraphs) if p.strip()]
+
+    # لو عندنا مشاهد صامتة — نحسب مدة كل واحدة بعد ما نعمل TTS للكلام
+    # في الوقت ده نخزن الـ spoken audio الأول
+
+    spoken_durations = {}  # index → duration
+
     for i, para in enumerate(paragraphs):
+        if not para.strip():
+            # مشهد صامت — هنتعامل معاه بعدين
+            continue
+
         p_path = os.path.join(AUDIO_DIR, f"_para_{i}.mp3")
-        print(f"  🔊 فقرة {i+1}/{len(paragraphs)}...")
+        print(f"  🔊 فقرة {i+1}/{len(paragraphs)} (كلام)...")
 
         timings = synthesize_with_timings(para, p_path, EDGE_TTS_VOICE)
 
         d = get_audio_duration(p_path)
-        paragraph_paths.append(p_path)
 
-        # نحسب الـ silence في بداية الفقرة (edge-tts بيضيف silence قبل الكلام)
-        # الكلمة الأولى في الـ timings بتحدد إمتى بدأ الكلام فعلاً
         para_silence = timings[0][1] if timings else 0.0
-        # مدة الفقرة الفعلية = مدة الصوت - الـ silence في الأول
         effective_duration = d - para_silence
-        durations.append(effective_duration)
+        spoken_durations[i] = (p_path, effective_duration, timings, para_silence)
 
         if not timings:
-            print(f"     ⚠️ فقرة {i+1}: مفيش word timings — subtitles مش هتظهر لهذه الفقرة")
+            print(f"     ⚠️ فقرة {i+1}: مفيش word timings")
         else:
             print(f"     ⏱️ {d:.1f}s (silence: {para_silence:.2f}s) — {len(timings)} كلمة ✅")
 
-        # تحويل timing من relative → absolute مع إزالة الـ silence
-        for word, rel_start, rel_end in timings:
-            adjusted_start = (rel_start - para_silence) + cumulative_offset
-            adjusted_end   = (rel_end   - para_silence) + cumulative_offset
-            all_word_timings.append((word, adjusted_start, adjusted_end))
+    # حساب مدة كل مشهد صامت
+    total_spoken = sum(v[1] for v in spoken_durations.values())
+    n_silent = len(silent_indices)
 
-        cumulative_offset += effective_duration
+    if n_silent > 0 and total_spoken < TARGET_TOTAL:
+        silence_per_scene = (TARGET_TOTAL - total_spoken) / n_silent
+    else:
+        silence_per_scene = 30.0  # default 30 ثانية لكل مشهد صامت
+    silence_per_scene = max(silence_per_scene, 5.0)
+
+    print(f"🔇 {n_silent} مشهد صامت × {silence_per_scene:.1f}s = {n_silent * silence_per_scene:.0f}s")
+
+    # بناء الـ lists بالترتيب الصح
+    for i, para in enumerate(paragraphs):
+        if not para.strip():
+            # مشهد صامت — نعمل ملف صوت فيه silence
+            p_path = os.path.join(AUDIO_DIR, f"_para_{i}.mp3")
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono",
+                 "-t", str(silence_per_scene),
+                 "-c:a", "libmp3lame", "-b:a", "64k",
+                 p_path],
+                capture_output=True
+            )
+            paragraph_paths.append(p_path)
+            durations.append(silence_per_scene)
+            cumulative_offset += silence_per_scene
+            print(f"  🔇 فقرة {i+1}/{len(paragraphs)} (صمت {silence_per_scene:.0f}s)")
+        else:
+            p_path, effective_duration, timings, para_silence = spoken_durations[i]
+            paragraph_paths.append(p_path)
+            durations.append(effective_duration)
+
+            for word, rel_start, rel_end in timings:
+                adjusted_start = (rel_start - para_silence) + cumulative_offset
+                adjusted_end   = (rel_end   - para_silence) + cumulative_offset
+                all_word_timings.append((word, adjusted_start, adjusted_end))
+
+            cumulative_offset += effective_duration
 
     # دمج ملفات الصوت
     if base_filename.lower().endswith((".wav", ".mp3")):
