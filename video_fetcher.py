@@ -1,4 +1,4 @@
-# video_fetcher.py - جلب مقاطع قطط مضحكة من Pexels
+# video_fetcher.py - جلب مقاطع حيوانات مضحكة من Pexels
 
 import os
 import random
@@ -11,7 +11,9 @@ from config import OUTPUT_DIR
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION = 4.0
-CLIP_MAX_DURATION = 15.0
+CLIP_MAX_DURATION = 30.0   # زدنا من 15 لـ 30 عشان نوصل 5 دقايق
+
+TARGET_VIDEO_DURATION = 300  # 5 دقايق = 300 ثانية
 
 PEXELS_QUERIES = [
     "funny animal",
@@ -74,10 +76,14 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
 
 
 # ──────────────────────────────────────────
-# Pexels
+# Pexels - يرجع list of dicts مع description
 # ──────────────────────────────────────────
 
 def _fetch_from_pexels(count: int, clip_duration: float) -> list:
+    """
+    يرجع list of dicts:
+      { "path": str, "description": str, "pexels_url": str }
+    """
     api_key = os.environ.get("PEXELS_API_KEY", "")
     if not api_key:
         print("  ⚠️ PEXELS_API_KEY مش موجود!")
@@ -113,10 +119,19 @@ def _fetch_from_pexels(count: int, clip_duration: float) -> list:
                 if not files:
                     files = v["video_files"]
                 best = files[0]
+
+                # بناء الـ description من بيانات Pexels
+                user_name = v.get("user", {}).get("name", "unknown")
+                pexels_url = v.get("url", "")
+                # description من الـ URL slug أو الـ query
+                description = f"{q} video (Pexels by {user_name})"
+
                 all_videos.append({
-                    "url":      best["link"],
-                    "id":       f"pexels_{v['id']}",
-                    "duration": dur,
+                    "url":         best["link"],
+                    "id":          f"pexels_{v['id']}",
+                    "duration":    dur,
+                    "description": description,
+                    "pexels_url":  pexels_url,
                 })
         except Exception as e:
             print(f"  ⚠️ Pexels بحث فشل ({q}): {e}")
@@ -130,7 +145,11 @@ def _fetch_from_pexels(count: int, clip_duration: float) -> list:
         tmp = os.path.join(CLIPS_DIR, f"_tmp_{video['id']}.mp4")
 
         if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-            clips.append(clip_path)
+            clips.append({
+                "path":        clip_path,
+                "description": video["description"],
+                "pexels_url":  video["pexels_url"],
+            })
             continue
 
         try:
@@ -143,7 +162,11 @@ def _fetch_from_pexels(count: int, clip_duration: float) -> list:
             dur = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
             if _cut_clip(tmp, clip_path, dur):
                 print(f"  ✅ Pexels جاهز ({os.path.getsize(clip_path)//1024} KB)")
-                clips.append(clip_path)
+                clips.append({
+                    "path":        clip_path,
+                    "description": video["description"],
+                    "pexels_url":  video["pexels_url"],
+                })
             else:
                 print(f"  ⚠️ Pexels cut فشل")
         except Exception as e:
@@ -163,7 +186,19 @@ def _fetch_from_pexels(count: int, clip_duration: float) -> list:
 # ──────────────────────────────────────────
 
 def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
+    """
+    يرجع list of dicts:
+      { "path": str, "description": str, "pexels_url": str }
+
+    clip_duration: لو None بيحسبها تلقائياً عشان الفيديو كله يوصل TARGET_VIDEO_DURATION
+    """
     os.makedirs(CLIPS_DIR, exist_ok=True)
+
+    # حساب مدة كل كليب عشان الفيديو كله يوصل 5 دقايق
+    if clip_duration is None:
+        clip_duration = TARGET_VIDEO_DURATION / count
+        clip_duration = min(clip_duration, CLIP_MAX_DURATION)
+        print(f"🕐 مدة كل كليب: {clip_duration:.1f}s (تارجت {TARGET_VIDEO_DURATION}s / {count} مشهد)")
 
     existing = _get_existing_clips()
     if len(existing) >= count:
@@ -189,14 +224,19 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
 
 
 def _get_existing_clips() -> list:
+    """يرجع existing clips كـ list of dicts"""
     if not os.path.exists(CLIPS_DIR):
         return []
-    clips = [
-        os.path.join(CLIPS_DIR, f)
-        for f in os.listdir(CLIPS_DIR)
-        if f.endswith(".mp4") and not f.startswith("_tmp")
-        and os.path.getsize(os.path.join(CLIPS_DIR, f)) > 10_000
-    ]
+    clips = []
+    for f in os.listdir(CLIPS_DIR):
+        if f.endswith(".mp4") and not f.startswith("_tmp"):
+            full_path = os.path.join(CLIPS_DIR, f)
+            if os.path.getsize(full_path) > 10_000:
+                clips.append({
+                    "path":        full_path,
+                    "description": f"cached clip: {f}",
+                    "pexels_url":  "",
+                })
     random.shuffle(clips)
     return clips
 
@@ -220,5 +260,5 @@ if __name__ == "__main__":
     clips = fetch_cat_clips(count=3)
     print(f"\n✅ ({len(clips)}):")
     for c in clips:
-        sz = os.path.getsize(c) // 1024 if os.path.exists(c) else 0
-        print(f"  - {os.path.basename(c)} ({sz} KB)")
+        sz = os.path.getsize(c["path"]) // 1024 if os.path.exists(c["path"]) else 0
+        print(f"  - {os.path.basename(c['path'])} ({sz} KB) | {c['description'][:60]}")
