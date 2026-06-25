@@ -226,48 +226,60 @@ Exactly {len(paragraphs)} items."""
     raise RuntimeError("generate_scene_descriptions فشل بعد 3 محاولات")
 
 
-def generate_cat_script(topic: str = None) -> dict:
+def generate_funny_animals_script(topic: str = None) -> dict:
     """
-    يولد سكريبت لفيديو قطط مضحكة — كل فقرة بتوصف مشهد قطة.
-    المذيع بيوصف اللي بيحصل بشكل مضحك وخفيف.
+    يولد سكريبت لفيديو حيوانات مضحكة عامة (مش قطط بس).
+    المذيع بيتفاعل مع المشهد بشكل كوميدي — بدون ادعاء تفاصيل مش موجودة.
+    الفيديو ~5 دقائق (10 مشاهد × ~30 ثانية).
     """
-    chosen_topic = topic or "funny cats doing silly things"
+    chosen_topic = topic or "funny animals doing silly things"
 
-    prompt = f"""You are a funny, energetic YouTube narrator for a cats compilation channel.
+    prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
 
 Write a video script for: "{chosen_topic}"
 
-The script has EXACTLY 10 short scenes. Each scene describes what a cat is doing in a funny/cute clip,
-as if the narrator is reacting live to watching the clip.
+The script has EXACTLY 10 short scenes. Each scene is a GENERAL funny reaction to an animal clip —
+WITHOUT claiming specific details about what the animal is doing (because we don't know the exact clip).
 
-Style examples:
-- "Oh no, this cat just discovered the Christmas tree and looks absolutely OFFENDED by it. Watch those eyes..."
-- "This little guy has been staring at this wall for THREE hours. There is nothing on that wall. Nothing."
-- "The cat saw the cucumber. The cat did NOT appreciate the cucumber."
+CORRECT style — general reactions that work for ANY funny animal clip:
+- "Look at this guy — he has absolutely no idea what he's doing, and honestly, same."
+- "The confidence! The audacity! This animal woke up and chose chaos today."
+- "I don't know what's happening here, but I love it. This is peak animal behavior right there."
+- "When you think you're the boss but life has other plans... watch this."
+- "Scientists say animals don't have emotions. Scientists have clearly never seen this."
+
+WRONG style (NEVER do this — it makes false claims):
+- "Watch this cat knock over the glass on purpose" (too specific)
+- "This dog is chasing the mailman" (we don't know the clip)
+- "Look how this parrot says hello" (too specific)
 
 Rules:
-- Each scene is 2-3 sentences MAX — short, punchy, funny
-- React TO the clip, don't just describe it
-- Use humor, surprise, sarcasm — make it entertaining
-- Talk to the viewer: "watch this", "look at his face", "you won't believe what happens next"
-- Keep energy HIGH throughout
+- Each scene: 2-4 sentences of funny, punchy commentary
+- React with GENERAL humor that fits ANY funny animal moment
+- Never describe specific actions — be funny about the VIBE, the ENERGY, the MOOD
+- Mix different animals: dogs, cats, birds, monkeys, raccoons, pandas — variety!
+- Use "this animal", "this guy", "this creature", "our hero" — not species unless very generic
+- Talk to viewer: "watch this", "you won't believe it", "I can't"
+- Keep energy HIGH — this is a 5-minute compilation
 - EXACTLY 10 scenes
+
+The title MUST say "5 Minutes" since the video is ~5 minutes long.
 
 Reply with JSON ONLY:
 {{
-  "title": "funny title under 60 chars (e.g. 'Cats Being Absolute Idiots for 5 Minutes')",
-  "description": "YouTube description 60-80 words, funny tone, ends with CTA",
-  "tags": ["cats", "funnycats", "catsofyoutube", "catvideos", "funnyanimals", "cute", "compilation", "lol"],
+  "title": "funny animals title under 60 chars — MUST include '5 Minutes' (e.g. 'Animals Being Idiots for 5 Minutes')",
+  "description": "YouTube description 60-80 words, funny tone, mentions funny animals compilation, ends with CTA",
+  "tags": ["funnyanimals", "animals", "cute", "compilation", "funnypets", "animalsbeingidiots", "funny", "lol"],
   "story_paragraphs": [
     "scene 1 narration...",
     "scene 2 narration...",
     "... exactly 10 items ..."
   ],
-  "bg_keyword": "cats",
+  "bg_keyword": "animals",
   "mood": "happy"
 }}
 
-CRITICAL: story_paragraphs must contain EXACTLY 10 items."""
+CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 Minutes'."""
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -281,7 +293,7 @@ CRITICAL: story_paragraphs must contain EXACTLY 10 items."""
         "response_format": {"type": "json_object"},
     }
 
-    print(f"📝 جاري توليد سكريبت قطط: {chosen_topic}")
+    print(f"📝 جاري توليد سكريبت حيوانات مضحكة: {chosen_topic}")
 
     try:
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
@@ -291,9 +303,14 @@ CRITICAL: story_paragraphs must contain EXACTLY 10 items."""
         data = json.loads(raw)
 
         data["full_story"] = " ".join(data.get("story_paragraphs", []))
-        data.setdefault("bg_keyword", "cats")
+        data.setdefault("bg_keyword", "animals")
         data.setdefault("mood", "happy")
-        data.setdefault("tags", ["cats", "funnycats", "compilation"])
+        data.setdefault("tags", ["funnyanimals", "animals", "compilation", "funny"])
+
+        # تأكد إن العنوان فيه "5 Minutes"
+        title = data.get("title", "")
+        if "5 Minutes" not in title and "5 minutes" not in title:
+            data["title"] = title.rstrip(".!") + " for 5 Minutes"
 
         paras = data.get("story_paragraphs", [])
         if len(paras) != 10:
@@ -308,8 +325,14 @@ CRITICAL: story_paragraphs must contain EXACTLY 10 items."""
         return data
 
     except Exception as e:
-        print(f"❌ خطأ في توليد سكريبت القطط: {e}")
+        print(f"❌ خطأ في توليد سكريبت الحيوانات: {e}")
         raise
+
+
+# للتوافق مع الكود القديم
+def generate_cat_script(topic: str = None) -> dict:
+    """wrapper للتوافق — بيستدعي generate_funny_animals_script"""
+    return generate_funny_animals_script(topic)
 
 
 if __name__ == "__main__":
