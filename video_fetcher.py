@@ -14,18 +14,17 @@ CLIP_MIN_DURATION = 4.0
 CLIP_MAX_DURATION = 30.0
 TARGET_VIDEO_DURATION = 300  # 5 دقايق
 
-# كلمات بحث أقوى وأبسط
+# كلمات بحث أقوى
 YOUTUBE_QUERIES = [
     "funny cats",
     "hilarious cats",
-    "funny dogs",
     "cute kittens",
+    "funny dogs",
     "cat fails",
-    "funny pets",
     "cute funny animals",
     "kittens playing",
+    "funny pets",
     "puppy fails",
-    "funny animal videos",
     "hilarious pets",
 ]
 
@@ -83,7 +82,6 @@ def _sanitize_id(video_id: str) -> str:
 # ──────────────────────────────────────────
 
 def _search_youtube(query: str, max_results: int = 15) -> list:
-    """بحث يوتيوب مع أقوى flags"""
     try:
         search_url = f"ytsearch{max_results}:{query}"
         cmd = [
@@ -103,10 +101,7 @@ def _search_youtube(query: str, max_results: int = 15) -> list:
         print(f"  🔍 بحث: {query}")
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         
-        print(f"     exit code: {r.returncode} | نتايج: {len(r.stdout.strip().splitlines())} سطر")
-
-        if r.stderr and "ERROR" in r.stderr:
-            print(f"     ⚠️ stderr: {r.stderr[-300:]}")
+        print(f"     exit code: {r.returncode} | سطور: {len(r.stdout.strip().splitlines())}")
 
         results = []
         for line in r.stdout.strip().split("\n"):
@@ -129,16 +124,13 @@ def _search_youtube(query: str, max_results: int = 15) -> list:
         print(f"     ✅ وجدنا {len(results)} فيديو صالح")
         return results
         
-    except subprocess.TimeoutExpired:
-        print(f"  ⚠️ timeout في البحث ({query})")
-        return []
     except Exception as e:
-        print(f"  ⚠️ خطأ في _search_youtube ({query}): {e}")
+        print(f"  ⚠️ خطأ في البحث ({query}): {e}")
         return []
 
 
 # ──────────────────────────────────────────
-# Download
+# Download with Cookies Support
 # ──────────────────────────────────────────
 
 def _download_video(url: str, video_id: str) -> str | None:
@@ -150,28 +142,33 @@ def _download_video(url: str, video_id: str) -> str | None:
 
     cmd = [
         "yt-dlp",
-        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]",
+        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
         "--merge-output-format", "mp4",
         "--no-playlist",
         "--quiet",
         "--no-warnings",
         "--js-runtimes", "deno",
-        "--extractor-args", "youtube:player_client=web,ios,android",
+        "--extractor-args", "youtube:player_client=ios,android,web",
+        "--cookies-from-browser", "chrome",        # جرب chrome أو firefox
+        # "--cookies", "cookies.txt",              # لو هتستخدم ملف cookies
         "-o", tmp_path,
         url,
     ]
     
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=150)
-        if r.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 10_000:
+        print(f"  ⬇️ تحميل: {video_id} ...")
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+        
+        if r.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 5_000_000:
+            print(f"  ✅ تحميل ناجح ({os.path.getsize(tmp_path)//1024} KB)")
             return tmp_path
         else:
-            print(f"  ⚠️ تحميل فشل: {video_id}")
+            print(f"  ⚠️ تحميل فشل: {video_id} | exit: {r.returncode}")
             if r.stderr:
-                print(f"     {r.stderr[-200:]}")
+                print(f"     {r.stderr[-400:]}")
             return None
     except Exception as e:
-        print(f"  ⚠️ خطأ تحميل ({video_id}): {e}")
+        print(f"  ⚠️ خطأ في التحميل ({video_id}): {e}")
         return None
 
 
@@ -188,7 +185,7 @@ def _fetch_from_youtube(count: int, clip_duration: float) -> list:
     for q in queries:
         videos = _search_youtube(q)
         all_videos.extend(videos)
-        time.sleep(0.8)  # تأخير أكبر شوية
+        time.sleep(1.0)
 
     # إزالة التكرار
     seen = set()
@@ -233,8 +230,7 @@ def fetch_cat_clips(count: int = 10, clip_duration: float = None) -> list:
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
     if clip_duration is None:
-        clip_duration = TARGET_VIDEO_DURATION / count
-        clip_duration = min(clip_duration, CLIP_MAX_DURATION)
+        clip_duration = min(TARGET_VIDEO_DURATION / count, CLIP_MAX_DURATION)
         print(f"🕐 مدة كل كليب: {clip_duration:.1f}s")
 
     existing = _get_existing_clips()
@@ -243,12 +239,11 @@ def fetch_cat_clips(count: int = 10, clip_duration: float = None) -> list:
         return random.sample(existing, count)
 
     needed = count - len(existing)
-    print(f"🎥 جاري جلب {needed} مقطع جديد من YouTube...")
+    print(f"🎥 جاري جلب {needed} مقطع جديد...")
 
     yt_clips = _fetch_from_youtube(needed, clip_duration)
     clips = existing + yt_clips
 
-    # تكرار لو ناقص
     while len(clips) < count and clips:
         clips.append(random.choice(clips))
 
