@@ -4,14 +4,20 @@ import time
 import random
 from datetime import datetime
 
+CLIPS_DIR = "clips"
+
+def _sanitize_id(video_id: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in video_id)[:20]
+
 def _search_with_yt_dlp(query: str, max_results: int = 8):
     print(f"   🔍 بحث: {query}")
     try:
         cmd = [
             "yt-dlp", f"ytsearch{max_results}:{query}",
-            "--flat-playlist", "--print", "%(id)s %(title)s", "--quiet"
+            "--flat-playlist", "--print", "%(id)s %(title)s", "--quiet",
+            "--extractor-args", "youtube:player_client=ios,web"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=50)
         videos = []
         for line in result.stdout.strip().split('\n'):
             if line.strip():
@@ -24,80 +30,84 @@ def _search_with_yt_dlp(query: str, max_results: int = 8):
                     })
         print(f"   ✅ وجد {len(videos)} فيديو")
         return videos
-    except:
+    except Exception as e:
+        print(f"   ❌ خطأ في البحث: {e}")
         return []
 
+def _download_video(url: str, video_id: str) -> str | None:
+    safe_id = _sanitize_id(video_id)
+    final_path = os.path.join(CLIPS_DIR, f"yt_{safe_id}.mp4")
 
-def download_clips(videos, download_dir="clips"):
-    os.makedirs(download_dir, exist_ok=True)
-    downloaded = []
-    for i, video in enumerate(videos[:10]):   # حمل أول 10
-        path = f"{download_dir}/clip_{i:03d}.mp4"
-        try:
-            cmd = [
-                "yt-dlp",
-                "--cookies-from-browser", "chrome",
-                "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best",
-                "--merge-output-format", "mp4",
-                "--retries", "10",
-                "-o", path,
-                video["url"]
-            ]
-            print(f"   ⬇️ تحميل {i+1}/{len(videos)}")
-            subprocess.run(cmd, timeout=120, check=True)
-            if os.path.exists(path):
-                downloaded.append(path)
-        except:
-            continue
-        time.sleep(2)
-    return downloaded
+    if os.path.exists(final_path) and os.path.getsize(final_path) > 500_000:
+        print(f"   ✅ موجود مسبقاً: {safe_id}")
+        return final_path
 
-
-def create_final_video(clips, output="final_video.mp4"):
-    if len(clips) < 3:
-        print("❌ عدد الكليبات قليل")
-        return False
-
-    # إنشاء ملف list لـ ffmpeg
-    with open("clips_list.txt", "w") as f:
-        for clip in clips:
-            f.write(f"file '{clip}'\n")
-
-    print("✂️ جاري دمج الفيديوهات...")
     cmd = [
-        "ffmpeg", "-f", "concat", "-safe", "0", "-i", "clips_list.txt",
-        "-c", "copy", "-y", output
+        "yt-dlp",
+        "--cookies-from-browser", "chrome",
+        "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "--retries", "5",
+        "--fragment-retries", "5",
+        "--extractor-args", "youtube:player_client=ios,web,android",
+        "--ignore-errors",
+        "-o", final_path,
+        url
     ]
+    
+    print(f"   ⬇️ تحميل: {video_id}")
     try:
-        subprocess.run(cmd, check=True, timeout=60)
-        print(f"✅ تم إنشاء الفيديو النهائي: {output}")
-        return True
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+        size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
+        
+        if r.returncode == 0 and size > 800_000:
+            print(f"   ✅ نجح ({size // (1024*1024)} MB)")
+            return final_path
+        else:
+            print(f"   ⚠️ فشل أو حجم صغير ({size} bytes) | code={r.returncode}")
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            return None
     except Exception as e:
-        print(f"❌ خطأ في الدمج: {e}")
-        return False
+        print(f"   ⚠️ خطأ تحميل: {e}")
+        return None
 
-
-def run_cat_pipeline():
-    print(f"\n🐱 {datetime.now().strftime('%d-%m-%Y %H:%M')} - بدء إنتاج فيديو قطط")
+def fetch_cat_clips(count: int = 10):
+    os.makedirs(CLIPS_DIR, exist_ok=True)
     
-    queries = ["funny cats", "cute kittens", "cat compilation", "kittens playing"]
+    QUERIES = [
+        "funny cats", "cute kittens", "cat fails", "hilarious cats",
+        "kittens playing", "funny cat videos", "cat comedy",
+        "cute cat shorts", "funny kitten fails", "cats being silly",
+        "adorable kittens", "cat zoomies", "silly cats"
+    ]
+    
     all_videos = []
+    downloaded = []
     
-    for q in queries:
-        videos = _search_with_yt_dlp(q)
+    random.shuffle(QUERIES)
+    
+    for q in QUERIES[:6]:  # 6 queries كفاية
+        videos = _search_with_yt_dlp(q, max_results=6)
         all_videos.extend(videos)
-        if len(all_videos) >= 12:
+        
+        for video in videos[:count - len(downloaded)]:
+            path = _download_video(video["url"], video["id"])
+            if path:
+                downloaded.append({
+                    "path": path,
+                    "title": video["title"],
+                    "id": video["id"]
+                })
+            if len(downloaded) >= count:
+                break
+        if len(downloaded) >= count:
             break
         time.sleep(3)
-
-    clips = download_clips(all_videos, "clips")
-    print(f"📥 تم تحميل {len(clips)} كليب")
-
-    if create_final_video(clips):
-        print("🎉 الفيديو النهائي جاهز!")
-        return True
-    return False
-
+    
+    print(f"📥 تم تحميل {len(downloaded)} كليب قطط")
+    return downloaded
 
 if __name__ == "__main__":
-    run_cat_pipeline()
+    fetch_cat_clips(12)
