@@ -878,6 +878,9 @@ def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
     print(f"🎬 بناء {len(paragraphs)} مشهد من كليبات قطط...")
     scene_clips = []
 
+    if not cat_clips:
+        raise ValueError("❌ Cat Pipeline: مفيش كليبات قطط — مينفعش نبني الفيديو. تأكد إن Rumble fetcher شغال وبيرجع فيديوهات.")
+
     for i in range(len(paragraphs)):
         clip_path = cat_clips[i % len(cat_clips)]
         target_dur = durations[i]
