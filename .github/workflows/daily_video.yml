@@ -2,8 +2,12 @@ name: 🎬 Daily Video Bot
 
 on:
   schedule:
-    - cron: '0 17 * * *'
-  workflow_dispatch:
+    - cron: '0 17 * * *'      # كل يوم الساعة 5 مساءً
+  workflow_dispatch:          # عشان تشغله يدوياً
+
+concurrency:
+  group: \( {{ github.workflow }}- \){{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   video-bot:
@@ -19,24 +23,33 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 🎥 Install FFmpeg & yt-dlp (Latest)
+      - name: 🔄 Update yt-dlp to Latest Version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
           yt-dlp --version
 
-      - name: 🔑 Load YouTube Cookies
+      - name: 🎥 Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: 🔑 Load YouTube Cookies (اختياري)
         uses: AnimMouse/setup-yt-dlp/cookies@v3
         with:
           cookies: ${{ secrets.YOUTUBE_COOKIES }}
 
-      - name: 📦 Install Requirements
-        run: pip install -r requirements.txt
+      - name: 📦 Install Python Requirements
+        run: |
+          pip install -r requirements.txt
 
       - name: 🚀 Run Video Fetcher & Uploader
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          # YOUTUBE_API_KEY لو كنت مستخدمه
+          # YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # لو كنت مستخدمه
         run: python main.py --now --cats
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -rf clips/ *.mp4 *.wav *.jpg 2>/dev/null || true
