@@ -93,29 +93,36 @@ def run_cat_pipeline(topic: str = None):
     print("="*55 + "\n")
 
     try:
-        # ─── الخطوة 1: توليد السكريبت ─────────────────────
-        print("📝 [1/4] توليد سكريبت حيوانات مضحكة بـ Mistral...")
-        story = generate_funny_animals_script(topic)
+        # ─── الخطوة 1: جلب الكليبات أولاً عشان نعرف الـ descriptions ──
+        SCENE_COUNT = 10
+        print(f"🐱 [1/4] جلب {SCENE_COUNT} كليبات حيوانات من Pexels أولاً...")
+        cat_clips_data = fetch_cat_clips(count=SCENE_COUNT)
+
+        if not cat_clips_data:
+            raise RuntimeError(
+                "❌ Cat Pipeline: مفيش كليبات — "
+                "Pexels رجع 0 فيديو. تأكد من PEXELS_API_KEY."
+            )
+
+        # استخرج الـ descriptions عشان نبعتها لـ Mistral
+        clip_descriptions = [c["description"] for c in cat_clips_data]
+        print(f"   ✅ {len(clip_descriptions)} كليب جاهز — بنبعت الـ descriptions لـ Mistral")
+
+        # ─── الخطوة 2: توليد السكريبت بناءً على الكليبات الفعلية ──
+        print("\n📝 [2/4] توليد سكريبت مبني على الكليبات الفعلية بـ Mistral...")
+        story = generate_funny_animals_script(topic, clip_descriptions=clip_descriptions)
         print(f"   العنوان: {story['title']}")
 
-        # ─── الخطوة 2: تحويل النص لصوت ──────────────────
-        print("\n🎙️ [2/4] تحويل النص لصوت...")
+        # ─── الخطوة 3: تحويل النص لصوت ──────────────────
+        print("\n🎙️ [3/4] تحويل النص لصوت...")
         audio_filename = f"audio_cats_{timestamp}.wav"
         audio_info     = text_to_speech_paragraphs(story["story_paragraphs"], audio_filename)
         audio_path     = audio_info["audio_path"]
         duration       = audio_info["total_duration"]
         print(f"   مدة الصوت: {duration:.0f} ثانية ({duration/60:.1f} دقيقة)")
 
-        # ─── الخطوة 3: تحميل كليبات القطط ───────────────
-        print("\n🐱 [3/4] جلب كليبات قطط من يوتيوب...")
-        cat_clips = fetch_cat_clips(count=len(story["story_paragraphs"]))
-
-        if not cat_clips:
-            raise RuntimeError(
-                "❌ Cat Pipeline: مفيش كليبات قطط — "
-                "Rumble search رجع 0 فيديو. "
-                "تأكد من الـ search queries أو جرب تشغل video_fetcher.py بشكل منفرد."
-            )
+        # استخرج الـ paths للـ video_maker
+        cat_clips = [c["path"] for c in cat_clips_data]
 
         # ─── الخطوة 4: صناعة الفيديو ─────────────────────
         print("\n🎬 [4/4] صناعة الفيديو...")
