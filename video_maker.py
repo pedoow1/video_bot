@@ -781,7 +781,7 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     subtitle_clips = []
     if all_word_timings:
         print("💬 بناء subtitle clips...")
-        sub_lines = _group_timings_into_lines(all_word_timings, max_words=5)
+        sub_lines = _group_timings_into_lines(all_word_timings, chunk_size=5)
         subtitle_clips = _build_subtitle_clips(
             sub_lines,
             scene_start=0.0,
