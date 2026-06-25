@@ -226,15 +226,55 @@ Exactly {len(paragraphs)} items."""
     raise RuntimeError("generate_scene_descriptions فشل بعد 3 محاولات")
 
 
-def generate_funny_animals_script(topic: str = None) -> dict:
+def generate_funny_animals_script(topic: str = None, clip_descriptions: list = None) -> dict:
     """
-    يولد سكريبت لفيديو حيوانات مضحكة عامة (مش قطط بس).
-    المذيع بيتفاعل مع المشهد بشكل كوميدي — بدون ادعاء تفاصيل مش موجودة.
+    يولد سكريبت لفيديو حيوانات مضحكة عامة.
+    لو اتبعتله clip_descriptions (من Pexels) يكتب تعليق مبني على كل كليب فعلاً.
     الفيديو ~5 دقائق (10 مشاهد × ~30 ثانية).
     """
     chosen_topic = topic or "funny animals doing silly things"
 
-    prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
+    # لو عندنا descriptions من Pexels — نبني الـ prompt عليهم
+    if clip_descriptions and len(clip_descriptions) >= 10:
+        clips_section = "\n".join(
+            f"Clip {i+1}: {desc}" for i, desc in enumerate(clip_descriptions[:10])
+        )
+        prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
+
+You are about to commentate on 10 real animal video clips from Pexels. Here are the clips:
+
+{clips_section}
+
+Write a funny narration for EACH clip. Your commentary should:
+- Be inspired by the clip description (what type of animal, what mood/action it suggests)
+- Stay fun and energetic — like a charismatic YouTube host reacting live
+- Each scene: 2-4 punchy sentences
+- Talk to viewer: "watch this", "you won't believe it", "I can't"
+- NEVER make up specific fake details not suggested by the description
+- Keep energy HIGH — this is a 5-minute compilation
+- EXACTLY 10 scenes
+
+The title MUST say "5 Minutes" since the video is ~5 minutes long.
+
+Reply with JSON ONLY:
+{{
+  "title": "funny animals title under 60 chars — MUST include '5 Minutes'",
+  "description": "YouTube description 60-80 words, funny tone, mentions funny animals compilation, ends with CTA",
+  "tags": ["funnyanimals", "animals", "cute", "compilation", "funnypets", "animalsbeingidiots", "funny", "lol"],
+  "story_paragraphs": [
+    "scene 1 narration...",
+    "scene 2 narration...",
+    "... exactly 10 items ..."
+  ],
+  "bg_keyword": "animals",
+  "mood": "happy"
+}}
+
+CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 Minutes'."""
+
+    else:
+        # fallback لو مفيش descriptions
+        prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
 
 Write a video script for: "{chosen_topic}"
 
@@ -248,17 +288,11 @@ CORRECT style — general reactions that work for ANY funny animal clip:
 - "When you think you're the boss but life has other plans... watch this."
 - "Scientists say animals don't have emotions. Scientists have clearly never seen this."
 
-WRONG style (NEVER do this — it makes false claims):
-- "Watch this cat knock over the glass on purpose" (too specific)
-- "This dog is chasing the mailman" (we don't know the clip)
-- "Look how this parrot says hello" (too specific)
-
 Rules:
 - Each scene: 2-4 sentences of funny, punchy commentary
 - React with GENERAL humor that fits ANY funny animal moment
-- Never describe specific actions — be funny about the VIBE, the ENERGY, the MOOD
 - Mix different animals: dogs, cats, birds, monkeys, raccoons, pandas — variety!
-- Use "this animal", "this guy", "this creature", "our hero" — not species unless very generic
+- Use "this animal", "this guy", "this creature", "our hero"
 - Talk to viewer: "watch this", "you won't believe it", "I can't"
 - Keep energy HIGH — this is a 5-minute compilation
 - EXACTLY 10 scenes
