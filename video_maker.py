@@ -885,36 +885,36 @@ def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
         clip_path = cat_clips[i % len(cat_clips)]
         target_dur = durations[i]
 
-        try:
-            raw_clip = VideoFileClip(clip_path)
+        # تحقق إن الملف موجود فعلاً قبل ما نفتحه
+        if not os.path.exists(clip_path):
+            raise FileNotFoundError(f"❌ كليب مش موجود: {clip_path}")
+        if os.path.getsize(clip_path) < 10_000:
+            raise ValueError(f"❌ كليب صغير جداً (تالف؟): {clip_path} ({os.path.getsize(clip_path)} bytes)")
 
-            # لو الكليب أقصر من المطلوب — نلف عليه
-            if raw_clip.duration < target_dur:
-                loops = int(target_dur / raw_clip.duration) + 1
-                from moviepy.editor import concatenate_videoclips as _concat
-                raw_clip = _concat([raw_clip] * loops)
+        print(f"  📂 مشهد {i+1} — {os.path.basename(clip_path)} ({os.path.getsize(clip_path)//1024} KB)")
 
-            # قص بالمدة المطلوبة
-            clip = raw_clip.subclip(0, target_dur)
+        raw_clip = VideoFileClip(clip_path)
 
-            # resize للـ 1920x1080
-            clip = clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+        # لو الكليب أقصر من المطلوب — نلف عليه
+        if raw_clip.duration < target_dur:
+            loops = int(target_dur / raw_clip.duration) + 1
+            from moviepy.editor import concatenate_videoclips as _concat
+            raw_clip = _concat([raw_clip] * loops)
 
-            # fade بين المشاهد
-            if i > 0:
-                clip = fadein(clip, 0.4)
-            if i < len(paragraphs) - 1:
-                clip = fadeout(clip, 0.4)
+        # قص بالمدة المطلوبة
+        clip = raw_clip.subclip(0, target_dur)
 
-            scene_clips.append(clip)
-            print(f"  ✅ مشهد {i+1} — {os.path.basename(clip_path)} ({target_dur:.1f}s)")
+        # resize للـ 1920x1080
+        clip = clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
-        except Exception as e:
-            print(f"  ⚠️ مشهد {i+1} فشل ({e}) — fallback لصورة")
-            from config import FONT_PATH as _FP
-            fb = _fallback_background("happy", i)
-            clip = _make_motion_clip(fb, target_dur, "zoom_in")
-            scene_clips.append(clip)
+        # fade بين المشاهد
+        if i > 0:
+            clip = fadein(clip, 0.4)
+        if i < len(paragraphs) - 1:
+            clip = fadeout(clip, 0.4)
+
+        scene_clips.append(clip)
+        print(f"  ✅ مشهد {i+1} جاهز ({target_dur:.1f}s)")
 
     # ─── 5. دمج المشاهد ───────────────────────────────────
     print("🔗 دمج المشاهد...")
