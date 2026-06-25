@@ -14,14 +14,18 @@ CLIP_MIN_DURATION = 4.0
 CLIP_MAX_DURATION = 15.0
 
 PEXELS_QUERIES = [
+    "funny animal",
+    "cute dog funny",
     "funny cat",
+    "funny bird",
+    "funny monkey",
     "cute kitten",
-    "cat playing",
-    "cat fail",
-    "silly cat",
-    "kitten funny",
-    "cats being silly",
-    "hilarious cat",
+    "funny raccoon",
+    "funny panda",
+    "animal fail funny",
+    "funny pet video",
+    "animals being silly",
+    "funny wildlife",
 ]
 
 
