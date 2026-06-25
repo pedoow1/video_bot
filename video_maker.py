@@ -558,7 +558,70 @@ def _render_subtitle_image(text: str, font_path: str, font_size: int = 52) -> Im
 #  Thumbnail
 # ==============================
 
+def _generate_thumbnail_with_dalle(title: str, bg_keyword: str, output_path: str) -> bool:
+    """يطلب من GPT-4o (DALL-E 3) يولد thumbnail احترافي لليوتيوب."""
+    import base64
+    from config import GITHUB_TOKEN
+
+    prompt = f"""Create a professional YouTube thumbnail for a video titled: "{title}"
+
+Style requirements:
+- Eye-catching, high contrast, vibrant colors
+- Cinematic dramatic lighting
+- Bold visual composition — the kind that gets clicks
+- Topic/theme: {bg_keyword}
+- No text overlays — just the visual background
+- 16:9 aspect ratio feel
+- Photorealistic or hyper-detailed digital art style"""
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 500,
+    }
+
+    # نستخدم DALL-E 3 عبر GitHub Models
+    dalle_url = "https://models.github.ai/inference/images/generations"
+    dalle_payload = {
+        "model": "dall-e-3",
+        "prompt": prompt,
+        "n": 1,
+        "size": "1792x1024",
+        "quality": "hd",
+        "response_format": "b64_json"
+    }
+
+    try:
+        print("🎨 GPT-4o (DALL-E 3) بيولد الـ thumbnail...")
+        r = requests.post(dalle_url, headers=headers, json=dalle_payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        b64 = data["data"][0]["b64_json"]
+        img_bytes = base64.b64decode(b64)
+        from io import BytesIO
+        img = Image.open(BytesIO(img_bytes)).convert("RGB")
+        img = img.resize((1280, 720), Image.LANCZOS)
+        img.save(output_path, "JPEG", quality=95)
+        print("✅ Thumbnail من DALL-E 3 جاهز")
+        return True
+    except Exception as e:
+        print(f"⚠️ DALL-E 3 فشل: {e} — fallback للـ Pillow")
+        return False
+
+
 def create_thumbnail(story_data: dict, bg_image_path: str, output_path: str) -> str:
+    title      = story_data["title"]
+    bg_keyword = story_data.get("bg_keyword", "space")
+
+    # أولاً: جرب DALL-E 3
+    if _generate_thumbnail_with_dalle(title, bg_keyword, output_path):
+        return output_path
+
+    # Fallback: الطريقة القديمة بـ Pillow
     img  = Image.open(bg_image_path).convert("RGB")
     img  = img.resize((1280, 720), Image.LANCZOS)
     img  = img.filter(ImageFilter.GaussianBlur(radius=2))
@@ -572,7 +635,6 @@ def create_thumbnail(story_data: dict, bg_image_path: str, output_path: str) -> 
     except Exception:
         font = ImageFont.load_default()
 
-    title   = story_data["title"]
     wrapped = textwrap.fill(title, width=25)
     lines   = wrapped.split("\n")
     total_h = len(lines) * 95
