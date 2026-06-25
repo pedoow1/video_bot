@@ -69,31 +69,20 @@ def _search_youtube_cc(query: str, max_results: int = 10) -> list:
                 continue
             try:
                 info = json.loads(line)
-                duration = info.get("duration", 0) or 0
-                license_info = info.get("license") or ""
-
-                # نقبل فيديو لو:
-                # 1. license فيها "Creative Commons" صراحةً
-                # 2. أو مفيش license ونثق في الـ query إن النتائج مناسبة
-                is_cc = "creative commons" in license_info.lower()
-
-                if 30 <= duration <= 900:
-                    videos.append({
-                        "url":      info.get("webpage_url") or info.get("url"),
-                        "title":    info.get("title", ""),
-                        "duration": duration,
-                        "id":       info.get("id", ""),
-                        "is_cc":    is_cc,
-                    })
+                url = info.get("webpage_url") or info.get("url")
+                if not url:
+                    continue
+                videos.append({
+                    "url":      url,
+                    "title":    info.get("title", ""),
+                    "duration": info.get("duration", 0) or 0,
+                    "id":       info.get("id", ""),
+                })
             except json.JSONDecodeError:
                 continue
 
-        # نفضل CC أولاً، لو مفيش ناخد أي نتيجة
-        cc_videos = [v for v in videos if v["is_cc"]]
-        final = cc_videos if cc_videos else videos
-
-        print(f"  ✅ لقى {len(final)} فيديو (CC: {len(cc_videos)}, total: {len(videos)})")
-        return final
+        print(f"  ✅ لقى {len(videos)} فيديو")
+        return videos
 
     except subprocess.TimeoutExpired:
         print("  ⚠️ البحث استغرق وقت طويل — تخطي")
