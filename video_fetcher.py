@@ -1,5 +1,5 @@
-# video_fetcher.py - جلب مقاطع قطط مضحكة من Rumble
-# yt-dlp بيشتغل مع Rumble بدون أي blocking من GitHub Actions
+# video_fetcher.py - جلب مقاطع قطط مضحكة
+# الترتيب: Rumble (--impersonate) → Pexels API (fallback مضمون)
 
 import os
 import re
@@ -7,14 +7,14 @@ import random
 import subprocess
 import json
 import time
+import requests
 from config import OUTPUT_DIR
 
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION = 4.0
-CLIP_MAX_DURATION = 15.0  # max 15 ثانية
+CLIP_MAX_DURATION = 15.0
 
-# search queries على Rumble
 SEARCH_QUERIES = [
     "funny cats",
     "cute funny kittens",
@@ -28,6 +28,9 @@ SEARCH_QUERIES = [
     "cats jumping fail",
 ]
 
+# ──────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────
 
 def _ensure_ytdlp():
     try:
@@ -36,25 +39,64 @@ def _ensure_ytdlp():
         print("📦 تثبيت yt-dlp...")
         subprocess.run(["pip", "install", "yt-dlp", "-q", "--break-system-packages"], check=True)
 
-    # curl_cffi مطلوب لـ --impersonate (تجاوز Cloudflare بدون cookies)
     try:
         import curl_cffi  # noqa
     except ImportError:
-        print("📦 تثبيت curl_cffi (مطلوب لـ Rumble)...")
+        print("📦 تثبيت curl_cffi...")
         subprocess.run(
             ["pip", "install", "curl_cffi>=0.10,<0.15", "-q", "--break-system-packages"],
-            check=True
+            check=True,
         )
 
 
+def _get_duration(path: str) -> float | None:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "json", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(json.loads(r.stdout)["format"]["duration"])
+    except Exception:
+        return None
+
+
+def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
+    """يقطع مقطع بالمدة المطلوبة من فيديو موجود."""
+    vid_dur = _get_duration(src)
+    if not vid_dur or vid_dur < CLIP_MIN_DURATION:
+        return False
+
+    cut_dur = min(target_duration, vid_dur, CLIP_MAX_DURATION)
+    max_start = max(0.0, vid_dur - cut_dur)
+    start = random.uniform(0, max_start) if max_start > 0 else 0.0
+
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-ss", str(round(start, 2)),
+        "-i", src,
+        "-t", str(round(cut_dur, 2)),
+        "-vf", (
+            "scale=1920:1080:force_original_aspect_ratio=decrease,"
+            "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+            "setsar=1"
+        ),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, timeout=90)
+    return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10_000
+
+
+# ──────────────────────────────────────────
+# Rumble source
+# ──────────────────────────────────────────
+
 def _search_rumble(query: str, limit: int = 15) -> list:
-    """يبحث على Rumble عبر yt-dlp مباشرة."""
     print(f"  🔍 Rumble: {query}")
     try:
-        # rumble:QUERY هو الطريقة الصح مع yt-dlp للبحث على Rumble
-        # --impersonate chrome:android بيخلي yt-dlp يتصرف كموبايل Chrome
-        # وبيعمل TLS fingerprint حقيقي يتجاوز Cloudflare بدون cookies
-        search_url = f"rumble:{query}"
         cmd = [
             "yt-dlp",
             "--flat-playlist",
@@ -63,7 +105,7 @@ def _search_rumble(query: str, limit: int = 15) -> list:
             "--no-warnings",
             "--quiet",
             "--impersonate", "chrome:android",
-            search_url,
+            f"rumble:{query}",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
@@ -75,10 +117,7 @@ def _search_rumble(query: str, limit: int = 15) -> list:
                 info = json.loads(line)
                 url = info.get("url") or info.get("webpage_url", "")
                 duration = info.get("duration") or 999
-                if not url:
-                    continue
-                # نتجاهل فيديوهات أطول من دقيقتين — غالباً compilations
-                if duration > 120:
+                if not url or duration > 120:
                     continue
                 videos.append({
                     "url":      url,
@@ -91,73 +130,38 @@ def _search_rumble(query: str, limit: int = 15) -> list:
 
         print(f"     → {len(videos)} فيديو")
         return videos
-
     except Exception as e:
-        print(f"  ⚠️ بحث فشل ({query}): {e}")
+        print(f"  ⚠️ Rumble بحث فشل ({query}): {e}")
         return []
 
 
-def _download_clip(video_url: str, post_id: str, target_duration: float, out_path: str) -> bool:
-    """يحمّل فيديو من Rumble ويقطع منه مقطع بالمدة المطلوبة (max 15s)."""
+def _download_rumble_clip(video_url: str, post_id: str, target_duration: float, out_path: str) -> bool:
     tmp = os.path.join(CLIPS_DIR, f"_tmp_{post_id}.mp4")
     try:
-        # تحميل بـ yt-dlp مع impersonate لتجاوز Cloudflare
         cmd_dl = [
             "yt-dlp",
             "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
             "--merge-output-format", "mp4",
             "--impersonate", "chrome:android",
             "-o", tmp,
-            "--no-warnings",
-            "--quiet",
+            "--no-warnings", "--quiet",
             video_url,
         ]
         r = subprocess.run(cmd_dl, capture_output=True, timeout=120)
         if r.returncode != 0 or not os.path.exists(tmp):
-            # fallback بدون format selector
             subprocess.run(
                 ["yt-dlp", "-f", "best", "--impersonate", "chrome:android",
                  "-o", tmp, "--no-warnings", "--quiet", video_url],
-                capture_output=True, timeout=90
+                capture_output=True, timeout=90,
             )
 
         if not os.path.exists(tmp) or os.path.getsize(tmp) < 5000:
             return False
 
-        # مدة الفيديو الفعلية
-        vid_dur = _get_duration(tmp)
-        if not vid_dur or vid_dur < CLIP_MIN_DURATION:
-            return False
-
-        # نقطع بحد أقصى 15 ثانية
-        cut_dur = min(target_duration, vid_dur, CLIP_MAX_DURATION)
-        max_start = max(0.0, vid_dur - cut_dur)
-        start = random.uniform(0, max_start) if max_start > 0 else 0.0
-
-        cmd_cut = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", str(round(start, 2)),
-            "-i", tmp,
-            "-t", str(round(cut_dur, 2)),
-            "-vf", (
-                "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
-                "setsar=1"
-            ),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            out_path,
-        ]
-        r2 = subprocess.run(cmd_cut, capture_output=True, timeout=90)
-        if r2.returncode != 0:
-            print(f"    ⚠️ ffmpeg: {r2.stderr.decode()[:120]}")
-            return False
-
-        return os.path.exists(out_path) and os.path.getsize(out_path) > 10_000
+        return _cut_clip(tmp, out_path, target_duration)
 
     except Exception as e:
-        print(f"    ⚠️ فشل: {e}")
+        print(f"    ⚠️ Rumble تحميل فشل: {e}")
         return False
     finally:
         if os.path.exists(tmp):
@@ -167,66 +171,31 @@ def _download_clip(video_url: str, post_id: str, target_duration: float, out_pat
                 pass
 
 
-def _get_duration(path: str) -> float | None:
-    try:
-        r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "json", path],
-            capture_output=True, text=True, timeout=15
-        )
-        return float(json.loads(r.stdout)["format"]["duration"])
-    except Exception:
-        return None
-
-
-def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
-    """
-    تجيب `count` مقطع قطط مضحكة من Rumble.
-    كل مقطع بحد أقصى 15 ثانية.
-    """
-    _ensure_ytdlp()
-    os.makedirs(CLIPS_DIR, exist_ok=True)
-
-    existing = _get_existing_clips()
-    if len(existing) >= count:
-        print(f"✅ {count} كليب موجودين — مش محتاج تحميل")
-        return random.sample(existing, count)
-
-    print(f"🐱 جاري جلب {count} مقطع من Rumble (max 15s لكل واحد)...")
-
-    clips = list(existing)
-    needed = count - len(clips)
-
-    # جمّع فيديوهات من queries مختلفة
+def _fetch_from_rumble(count: int, clip_duration: float) -> list:
+    clips = []
     all_videos = []
     queries = random.sample(SEARCH_QUERIES, min(len(SEARCH_QUERIES), 4))
     for q in queries:
-        if len(all_videos) >= needed * 4:
+        if len(all_videos) >= count * 4:
             break
-        vids = _search_rumble(q, limit=15)
-        all_videos.extend(vids)
+        all_videos.extend(_search_rumble(q, limit=15))
         time.sleep(1)
 
     if not all_videos:
-        print("  ⚠️ مفيش فيديوهات — هنرجع الموجودين")
-        return clips
+        return []
 
-    # إزالة التكرار
     seen = set()
-    unique_videos = []
+    unique = []
     for v in all_videos:
         if v["id"] not in seen:
             seen.add(v["id"])
-            unique_videos.append(v)
+            unique.append(v)
+    random.shuffle(unique)
 
-    random.shuffle(unique_videos)
-    print(f"  📦 {len(unique_videos)} فيديو — هنحمّل {needed}")
-
-    for video in unique_videos:
+    for video in unique:
         if len(clips) >= count:
             break
-
-        post_id  = video["id"]
+        post_id = video["id"]
         duration = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
         clip_path = os.path.join(CLIPS_DIR, f"rumble_{post_id}.mp4")
 
@@ -234,19 +203,143 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
             clips.append(clip_path)
             continue
 
-        print(f"  ⬇️ [{len(clips)+1}/{count}] {video['title'][:55]}...")
-        ok = _download_clip(video["url"], post_id, duration, clip_path)
-
-        if ok:
-            sz = os.path.getsize(clip_path) // 1024
-            print(f"  ✅ جاهز ({sz} KB)")
+        print(f"  ⬇️ Rumble [{len(clips)+1}/{count}] {video['title'][:50]}...")
+        if _download_rumble_clip(video["url"], post_id, duration, clip_path):
+            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB)")
             clips.append(clip_path)
         else:
             print(f"  ⚠️ فشل — التالي")
-
         time.sleep(0.5)
 
-    # كمّل بالموجودين لو مكملناش
+    return clips
+
+
+# ──────────────────────────────────────────
+# Pexels fallback
+# ──────────────────────────────────────────
+
+PEXELS_QUERIES = [
+    "funny cat", "cute kitten", "cat playing",
+    "cat fail", "silly cat", "kitten funny",
+]
+
+
+def _fetch_from_pexels(count: int, clip_duration: float) -> list:
+    api_key = os.environ.get("PEXELS_API_KEY", "")
+    if not api_key:
+        print("  ⚠️ PEXELS_API_KEY مش موجود — مش هينفع Pexels fallback")
+        return []
+
+    print(f"  🎬 Pexels fallback — جاري جلب {count} فيديو...")
+    clips = []
+    headers = {"Authorization": api_key}
+
+    queries = random.sample(PEXELS_QUERIES, min(len(PEXELS_QUERIES), 3))
+    all_videos = []
+
+    for q in queries:
+        try:
+            r = requests.get(
+                "https://api.pexels.com/videos/search",
+                headers=headers,
+                params={"query": q, "per_page": 15, "size": "medium"},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                continue
+            for v in r.json().get("videos", []):
+                dur = v.get("duration", 0)
+                if dur < CLIP_MIN_DURATION or dur > 120:
+                    continue
+                # اختار أفضل ملف ≤ 720p
+                files = sorted(
+                    [f for f in v["video_files"] if f.get("width", 9999) <= 1280],
+                    key=lambda f: f.get("width", 0),
+                    reverse=True,
+                )
+                if not files:
+                    files = v["video_files"]
+                best = files[0]
+                all_videos.append({
+                    "url":      best["link"],
+                    "id":       f"pexels_{v['id']}",
+                    "duration": dur,
+                })
+        except Exception as e:
+            print(f"  ⚠️ Pexels بحث فشل ({q}): {e}")
+
+    random.shuffle(all_videos)
+
+    for video in all_videos:
+        if len(clips) >= count:
+            break
+        clip_path = os.path.join(CLIPS_DIR, f"{video['id']}.mp4")
+        tmp = os.path.join(CLIPS_DIR, f"_tmp_{video['id']}.mp4")
+
+        if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
+            clips.append(clip_path)
+            continue
+
+        try:
+            print(f"  ⬇️ Pexels [{len(clips)+1}/{count}] {video['id']}...")
+            r = requests.get(video["url"], stream=True, timeout=60)
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 64):
+                    f.write(chunk)
+
+            dur = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
+            if _cut_clip(tmp, clip_path, dur):
+                print(f"  ✅ Pexels جاهز ({os.path.getsize(clip_path)//1024} KB)")
+                clips.append(clip_path)
+            else:
+                print(f"  ⚠️ Pexels cut فشل")
+        except Exception as e:
+            print(f"  ⚠️ Pexels تحميل فشل: {e}")
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+    return clips
+
+
+# ──────────────────────────────────────────
+# Main entry point
+# ──────────────────────────────────────────
+
+def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
+    """
+    تجيب `count` مقطع قطط:
+      1. بيجرب Rumble أول (impersonate)
+      2. لو فشل أو ما كملش → Pexels fallback
+    """
+    _ensure_ytdlp()
+    os.makedirs(CLIPS_DIR, exist_ok=True)
+
+    # استخدم الموجود لو كافي
+    existing = _get_existing_clips()
+    if len(existing) >= count:
+        print(f"✅ {count} كليب موجودين — مش محتاج تحميل")
+        return random.sample(existing, count)
+
+    clips = list(existing)
+    needed = count - len(clips)
+
+    # ── المحاولة الأولى: Rumble ──
+    print(f"🐱 [1/2] جاري المحاولة من Rumble ({needed} مقطع)...")
+    rumble_clips = _fetch_from_rumble(needed, clip_duration)
+    clips.extend(rumble_clips)
+
+    # ── Fallback: Pexels لو Rumble ما كملش ──
+    if len(clips) < count:
+        still_needed = count - len(clips)
+        print(f"🐱 [2/2] Rumble جاب {len(rumble_clips)} — Pexels fallback للباقي ({still_needed})...")
+        pexels_clips = _fetch_from_pexels(still_needed, clip_duration)
+        clips.extend(pexels_clips)
+
+    # كرر لو لسه ناقص
     if 0 < len(clips) < count:
         print(f"  ⚠️ عندنا {len(clips)} من {count} — هنكرر")
         while len(clips) < count:
@@ -285,7 +378,7 @@ def clear_clips_cache():
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار Rumble fetcher...\n")
+    print("🧪 اختبار fetcher...\n")
     clips = fetch_cat_clips(count=3)
     print(f"\n✅ ({len(clips)}):")
     for c in clips:
