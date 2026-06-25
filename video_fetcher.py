@@ -1,5 +1,5 @@
-# video_fetcher.py - جلب مقاطع قطط مضحكة من يوتيوب (Creative Commons)
-# يستخدم yt-dlp للبحث والتحميل، وffmpeg لتقطيع المقاطع
+# video_fetcher.py - جلب مقاطع قطط مضحكة من Reddit
+# بيستخدم Reddit JSON API (بدون أي key) + ffmpeg لتقطيع وتحويل المقاطع
 
 import os
 import re
@@ -17,308 +17,326 @@ CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 CLIP_MIN_DURATION = 4.0
 CLIP_MAX_DURATION = 9.0
 
-# كلمات البحث على يوتيوب - Creative Commons فقط
-SEARCH_QUERIES = [
-    "funny cats compilation",
-    "cute cats funny moments",
-    "cats being silly",
-    "funny kittens",
-    "cats fail compilation",
-    "cats vs cucumbers funny",
-    "cats jumping failing",
-    "cute funny cats",
-    "cats playing funny",
-    "hilarious cat moments",
-    "cat doing funny things",
-    "cats scared funny",
+# السبريدتات اللي فيها مقاطع قطط — محتوى لا نهائي ومجاني
+SUBREDDITS = [
+    "cats",
+    "catvideos",
+    "CatsBeingCats",
+    "IllegallySmolCats",
+    "AnimalsBeingFunny",
+    "aww",
+    "CatsAreAssholes",
+    "funnyanimals",
 ]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; CatVideoBot/1.0; +https://github.com/catbot)",
+    "Accept": "application/json",
+}
 
-def _search_youtube_api(query: str, max_results: int = 10) -> list:
+
+# ─── جلب الروابط من Reddit ───────────────────────────────────────────────────
+
+def _fetch_reddit_videos(subreddit: str, limit: int = 25, sort: str = "hot") -> list:
     """
-    يبحث على يوتيوب بدون API key — بيعمل request عادي زي المتصفح
-    ويستخرج الـ video IDs من الـ HTML.
+    يجيب روابط الفيديو من subreddit معين عبر Reddit JSON API (بدون key).
+    sort: hot | new | top | rising
     """
-    print(f"  🔍 بيبحث: {query}")
+    url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit={limit}&t=week"
     try:
-        import urllib.parse
-        encoded = urllib.parse.quote(query)
-        url = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIwAQ%3D%3D"
-        # EgIwAQ%3D%3D = فلتر Creative Commons
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-
-        # استخراج video IDs من الـ HTML
-        video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
-        # إزالة التكرار مع الحفاظ على الترتيب
-        seen = set()
-        unique_ids = []
-        for vid_id in video_ids:
-            if vid_id not in seen:
-                seen.add(vid_id)
-                unique_ids.append(vid_id)
-
-        unique_ids = unique_ids[:max_results]
+        data = resp.json()
+        posts = data.get("data", {}).get("children", [])
 
         videos = []
-        for vid_id in unique_ids:
+        for post in posts:
+            p = post.get("data", {})
+            video_url = _extract_video_url(p)
+            if not video_url:
+                continue
             videos.append({
-                "url":      f"https://www.youtube.com/watch?v={vid_id}",
-                "title":    vid_id,  # هنعرف العنوان من yt-dlp وقت التحميل
-                "duration": 120,
-                "id":       vid_id,
+                "url":       video_url,
+                "title":     p.get("title", "")[:80],
+                "id":        p.get("id", ""),
+                "subreddit": subreddit,
             })
 
-        print(f"  ✅ لقى {len(videos)} فيديو")
         return videos
 
     except Exception as e:
-        print(f"  ⚠️ scraping فشل: {e} — fallback لـ yt-dlp")
-        return _search_ytdlp(query, max_results)
-
-
-def _search_ytdlp(query: str, max_results: int = 10) -> list:
-    """Fallback: بحث بـ yt-dlp"""
-    try:
-        cmd = [
-            "yt-dlp",
-            f"ytsearch{max_results}:{query}",
-            "--dump-json",
-            "--no-download",
-            "--quiet",
-            "--no-warnings",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        videos = []
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                info = json.loads(line)
-                url = info.get("webpage_url") or info.get("url")
-                if not url:
-                    continue
-                videos.append({
-                    "url":      url,
-                    "title":    info.get("title", ""),
-                    "duration": info.get("duration", 120) or 120,
-                    "id":       info.get("id", ""),
-                })
-            except json.JSONDecodeError:
-                continue
-        print(f"  ✅ yt-dlp: لقى {len(videos)} فيديو")
-        return videos
-    except Exception as e:
-        print(f"  ⚠️ yt-dlp فشل: {e}")
+        print(f"  ⚠️ Reddit r/{subreddit} فشل: {e}")
         return []
 
 
-def _install_ytdlp():
-    """يثبت yt-dlp لو مش موجود"""
-    try:
-        subprocess.run(["yt-dlp", "--version"], capture_output=True, check=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print("📦 جاري تثبيت yt-dlp...")
-        subprocess.run(
-            ["pip", "install", "yt-dlp", "-q", "--break-system-packages"],
-            check=True
-        )
-        print("✅ yt-dlp اتثبت")
-
-
-def _search_youtube_cc(query: str, max_results: int = 10) -> list:
-    """يبحث على يوتيوب — يجرب API أولاً ثم yt-dlp"""
-    return _search_youtube_api(query, max_results)
-
-
-def _download_video_segment(url: str, video_id: str, start: float, duration: float, out_path: str) -> bool:
+def _extract_video_url(post: dict) -> str | None:
     """
-    يحمّل جزء معين من الفيديو مباشرةً بـ yt-dlp + ffmpeg.
-    أسرع بكتير من تحميل الفيديو كامل.
+    يستخرج direct video URL من بيانات Reddit post.
+    يدعم: reddit-hosted videos (v.redd.it) و gifv و gif و mp4 خارجي.
     """
+    # 1) Reddit-hosted video (v.redd.it)
+    if post.get("is_video") and post.get("media"):
+        reddit_video = post["media"].get("reddit_video", {})
+        url = reddit_video.get("fallback_url") or reddit_video.get("dash_url")
+        if url:
+            # نزيل ?source=fallback لو موجودة لأنها مش ضرورية
+            return url.split("?")[0]
+
+    # 2) gifv (Imgur)
+    url = post.get("url", "")
+    if url.endswith(".gifv"):
+        return url.replace(".gifv", ".mp4")
+
+    # 3) mp4 مباشر
+    if url.endswith(".mp4"):
+        return url
+
+    # 4) gif (ffmpeg بيتعامل معاه عادي)
+    if url.endswith(".gif") and "imgur" in url:
+        return url
+
+    # 5) secure_media fallback
+    secure = post.get("secure_media", {})
+    if secure and secure.get("reddit_video"):
+        url = secure["reddit_video"].get("fallback_url", "")
+        if url:
+            return url.split("?")[0]
+
+    return None
+
+
+# ─── تحميل وتقطيع المقطع ─────────────────────────────────────────────────────
+
+def _download_and_cut(video_url: str, post_id: str, duration: float, out_path: str) -> bool:
+    """
+    يحمّل فيديو Reddit ويقطع منه مقطع بالمدة المطلوبة.
+    Reddit videos عادةً قصيرة (10-60 ثانية)، فبنبدأ من نص الفيديو.
+    """
+    tmp_video = os.path.join(CLIPS_DIR, f"_tmp_{post_id}_v.mp4")
+    tmp_audio = os.path.join(CLIPS_DIR, f"_tmp_{post_id}_a.mp4")
+    tmp_merged = os.path.join(CLIPS_DIR, f"_tmp_{post_id}_m.mp4")
+
     try:
-        # أول خطوة: جيب الـ direct stream URL
-        cmd_url = [
-            "yt-dlp",
-            "-f", "best[height<=720][ext=mp4]/best[height<=720]/best",
-            "--get-url",
-            "--quiet",
-            "--no-warnings",
-            url,
-        ]
-        result = subprocess.run(cmd_url, capture_output=True, text=True, timeout=30)
-        stream_url = result.stdout.strip()
+        # ─ تحميل الفيديو ─
+        if not _download_file(video_url, tmp_video):
+            return False
 
-        if not stream_url or "ERROR" in stream_url:
-            # fallback: تحميل الفيديو كامل وتقطيعه
-            return _download_full_then_cut(url, video_id, start, duration, out_path)
+        # ─ تحميل الصوت (Reddit يفصل الصوت في ملف منفصل أحيانًا) ─
+        audio_url = _get_reddit_audio_url(video_url)
+        has_audio = False
+        if audio_url:
+            has_audio = _download_file(audio_url, tmp_audio, silent=True)
 
-        # تقطيع مباشر من الـ stream بـ ffmpeg
-        cmd_ffmpeg = [
+        # ─ احسب نقطة البداية ─
+        vid_duration = _get_duration(tmp_video)
+        if vid_duration is None or vid_duration < CLIP_MIN_DURATION:
+            return False
+
+        duration = min(duration, vid_duration)
+        max_start = max(0.0, vid_duration - duration)
+        start = random.uniform(max_start * 0.2, max_start * 0.8) if max_start > 0 else 0.0
+
+        # ─ دمج الفيديو والصوت أو مجرد قطع ─
+        if has_audio and os.path.exists(tmp_audio):
+            _merge_video_audio(tmp_video, tmp_audio, tmp_merged)
+            source = tmp_merged if os.path.exists(tmp_merged) else tmp_video
+        else:
+            source = tmp_video
+
+        # ─ تقطيع + تحويل لـ 1080p ─
+        cmd = [
             "ffmpeg", "-y",
-            "-ss", str(start),
-            "-i", stream_url,
-            "-t", str(duration),
-            "-vf", f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "-ss", str(round(start, 2)),
+            "-i", source,
+            "-t", str(round(duration, 2)),
+            "-vf", (
+                "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+                "setsar=1"
+            ),
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
+            "-loglevel", "error",
             out_path,
         ]
-        subprocess.run(cmd_ffmpeg, capture_output=True, timeout=120, check=True)
+        result = subprocess.run(cmd, capture_output=True, timeout=90)
 
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 10_000:
-            return True
-        return False
-
-    except Exception as e:
-        print(f"    ⚠️ stream download فشل: {e}")
-        return _download_full_then_cut(url, video_id, start, duration, out_path)
-
-
-def _download_full_then_cut(url: str, video_id: str, start: float, duration: float, out_path: str) -> bool:
-    """
-    Fallback: يحمّل الفيديو كامل ثم يقطع منه الجزء المطلوب.
-    """
-    tmp_path = os.path.join(CLIPS_DIR, f"_tmp_{video_id}.mp4")
-    try:
-        # تحميل بجودة متوسطة عشان يكون أسرع
-        cmd_dl = [
-            "yt-dlp",
-            "-f", "best[height<=480][ext=mp4]/best[height<=480]/worst",
-            "-o", tmp_path,
-            "--quiet",
-            "--no-warnings",
-            url,
-        ]
-        subprocess.run(cmd_dl, capture_output=True, timeout=180, check=True)
-
-        if not os.path.exists(tmp_path):
+        if result.returncode != 0:
+            print(f"    ⚠️ ffmpeg error: {result.stderr.decode()[:200]}")
             return False
-
-        # تقطيع
-        cmd_cut = [
-            "ffmpeg", "-y",
-            "-ss", str(start),
-            "-i", tmp_path,
-            "-t", str(duration),
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            out_path,
-        ]
-        subprocess.run(cmd_cut, capture_output=True, timeout=60, check=True)
 
         return os.path.exists(out_path) and os.path.getsize(out_path) > 10_000
 
     except Exception as e:
-        print(f"    ⚠️ full download فشل: {e}")
+        print(f"    ⚠️ download/cut فشل: {e}")
         return False
-    finally:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
+    finally:
+        for f in [tmp_video, tmp_audio, tmp_merged]:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+
+def _download_file(url: str, path: str, silent: bool = False) -> bool:
+    """يحمّل ملف عبر requests."""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30, stream=True)
+        resp.raise_for_status()
+        with open(path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                f.write(chunk)
+        return os.path.exists(path) and os.path.getsize(path) > 1000
+    except Exception as e:
+        if not silent:
+            print(f"    ⚠️ download فشل ({url[:60]}): {e}")
+        return False
+
+
+def _get_reddit_audio_url(video_url: str) -> str | None:
+    """
+    Reddit بيحط الصوت في ملف منفصل على v.redd.it.
+    مثال: https://v.redd.it/XXXX/DASH_720.mp4
+         → https://v.redd.it/XXXX/DASH_audio.mp4
+    """
+    if "v.redd.it" not in video_url:
+        return None
+    base = re.sub(r"/DASH_[^/]+\.mp4$", "", video_url)
+    if not base or base == video_url:
+        return None
+    return f"{base}/DASH_audio.mp4"
+
+
+def _merge_video_audio(video_path: str, audio_path: str, out_path: str):
+    """يدمج فيديو وصوت في ملف واحد."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+        "-loglevel", "error",
+        out_path,
+    ]
+    subprocess.run(cmd, capture_output=True, timeout=60)
+
+
+def _get_duration(path: str) -> float | None:
+    """يجيب مدة الفيديو بالثواني."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "json",
+            path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        info = json.loads(result.stdout)
+        return float(info["format"]["duration"])
+    except Exception:
+        return None
+
+
+# ─── الدالة الرئيسية ─────────────────────────────────────────────────────────
 
 def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     """
-    الدالة الرئيسية — تجيب `count` مقطع من قطط مضحكة.
-    يرجع list من مسارات ملفات الفيديو.
+    الدالة الرئيسية — تجيب `count` مقطع من قطط مضحكة من Reddit.
+    يرجع list من مسارات ملفات mp4.
 
-    count: عدد المقاطع المطلوبة (= عدد الفقرات في السكريبت)
-    clip_duration: مدة كل مقطع بالثواني (None = عشوائي بين MIN و MAX)
+    count:         عدد المقاطع المطلوبة
+    clip_duration: مدة كل مقطع بالثواني (None = عشوائي)
     """
-    _install_ytdlp()
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
-    # لو عندنا كليبات محملة بالفعل — استخدمها مباشرة
-    existing = _get_existing_clips(count)
+    # لو عندنا كليبات محملة بالفعل — استخدمها
+    existing = _get_existing_clips()
     if len(existing) >= count:
         print(f"✅ {count} كليب موجودين بالفعل — مش محتاج تحميل جديد")
         return random.sample(existing, count)
 
-    print(f"🎬 جاري جلب {count} مقطع قطط Creative Commons من يوتيوب...")
+    print(f"🐱 جاري جلب {count} مقطع قطط من Reddit...")
 
-    clips = list(existing)  # ابدأ بالموجودين
+    clips = list(existing)
     needed = count - len(clips)
 
-    # خلط الـ queries عشان نتنوع
-    queries = random.sample(SEARCH_QUERIES, min(len(SEARCH_QUERIES), needed + 2))
+    # اجمع كل الفيديوهات من السبريدتات المختلفة
+    all_videos = []
+    subs_to_use = random.sample(SUBREDDITS, min(len(SUBREDDITS), 4))
 
-    for query in queries:
+    for sub in subs_to_use:
+        print(f"  📡 r/{sub} ...")
+        sort = random.choice(["hot", "top", "new"])
+        videos = _fetch_reddit_videos(sub, limit=25, sort=sort)
+        all_videos.extend(videos)
+        if len(all_videos) >= needed * 3:
+            break
+        time.sleep(0.5)  # لا نضغط على Reddit API
+
+    if not all_videos:
+        print("  ⚠️ مفيش فيديوهات من Reddit — هنرجع كليبات موجودة")
+        return clips[:count] if clips else []
+
+    random.shuffle(all_videos)
+    print(f"  ✅ لقينا {len(all_videos)} فيديو — هنحمّل منهم {needed}")
+
+    for video in all_videos:
         if len(clips) >= count:
             break
 
-        videos = _search_youtube_cc(query, max_results=8)
-        if not videos:
+        post_id = video["id"]
+        title   = video["title"]
+        url     = video["url"]
+        duration = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
+
+        clip_name = f"reddit_{post_id}.mp4"
+        clip_path = os.path.join(CLIPS_DIR, clip_name)
+
+        # لو الكليب موجود بالفعل
+        if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
+            print(f"  ✅ كليب موجود: {clip_name}")
+            clips.append(clip_path)
             continue
 
-        random.shuffle(videos)
+        print(f"  ⬇️ [{len(clips)+1}/{count}] {title[:55]}...")
 
-        for video in videos:
-            if len(clips) >= count:
-                break
+        success = _download_and_cut(url, post_id, duration, clip_path)
 
-            vid_id   = video["id"]
-            vid_dur  = video["duration"]
-            vid_url  = video["url"]
+        if success:
+            size_kb = os.path.getsize(clip_path) // 1024
+            print(f"  ✅ جاهز ({size_kb} KB)")
+            clips.append(clip_path)
+        else:
+            print(f"  ⚠️ فشل — هنجرب التالي")
 
-            # نختار نقطة عشوائية في منتصف الفيديو (نتجنب الأول والآخر)
-            margin   = min(10.0, vid_dur * 0.1)
-            max_start = max(0, vid_dur - CLIP_MAX_DURATION - margin)
-            start    = random.uniform(margin, max(margin, max_start))
-            duration = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
-            duration = min(duration, vid_dur - start)
+        time.sleep(0.3)
 
-            if duration < CLIP_MIN_DURATION:
-                continue
-
-            # اسم الملف
-            clip_name = f"cat_{vid_id}_{int(start)}.mp4"
-            clip_path = os.path.join(CLIPS_DIR, clip_name)
-
-            if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-                print(f"  ✅ كليب موجود: {clip_name}")
-                clips.append(clip_path)
-                continue
-
-            print(f"  ⬇️ بيحمّل: {video['title'][:50]}... ({start:.0f}s → {start+duration:.0f}s)")
-
-            success = _download_video_segment(vid_url, vid_id, start, duration, clip_path)
-
-            if success:
-                print(f"  ✅ كليب {len(clips)+1}/{count} جاهز")
-                clips.append(clip_path)
-                time.sleep(1)  # عشان مانضغطش على يوتيوب
-            else:
-                print(f"  ⚠️ فشل تحميل: {video['title'][:40]}")
-
+    # لو مش وصلنا العدد المطلوب — نكرر الموجودين
     if len(clips) < count:
         print(f"  ⚠️ جبنا {len(clips)} من {count} — هنكرر الموجودين")
-        while len(clips) < count:
+        while len(clips) < count and clips:
             clips.append(random.choice(clips))
 
     result = clips[:count]
-    print(f"✅ {len(result)} مقطع قطط جاهز!")
+    print(f"✅ {len(result)} مقطع جاهز!")
     return result
 
 
+# ─── مساعدات ─────────────────────────────────────────────────────────────────
+
 def _get_existing_clips(limit: int = None) -> list:
-    """يجيب الكليبات المحملة بالفعل"""
+    """يجيب الكليبات المحملة بالفعل في CLIPS_DIR."""
     if not os.path.exists(CLIPS_DIR):
         return []
     clips = [
         os.path.join(CLIPS_DIR, f)
         for f in os.listdir(CLIPS_DIR)
-        if f.endswith(".mp4") and not f.startswith("_tmp")
+        if f.endswith(".mp4")
+        and not f.startswith("_tmp")
         and os.path.getsize(os.path.join(CLIPS_DIR, f)) > 10_000
     ]
     random.shuffle(clips)
@@ -326,21 +344,26 @@ def _get_existing_clips(limit: int = None) -> list:
 
 
 def clear_clips_cache():
-    """يمسح الكليبات المحملة عشان يجيب جديدة في المرة الجاية"""
+    """يمسح الكليبات المحملة عشان يجيب جديدة في المرة الجاية."""
     if not os.path.exists(CLIPS_DIR):
         return
+    removed = 0
     for f in os.listdir(CLIPS_DIR):
         if f.endswith(".mp4"):
             try:
                 os.remove(os.path.join(CLIPS_DIR, f))
+                removed += 1
             except OSError:
                 pass
-    print("🗑️ تم مسح الكليبات القديمة")
+    print(f"🗑️ تم مسح {removed} كليب")
 
+
+# ─── اختبار مستقل ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("🧪 اختبار video_fetcher...")
+    print("🧪 اختبار video_fetcher (Reddit)...\n")
     clips = fetch_cat_clips(count=3)
-    print(f"\n✅ الكليبات:")
+    print(f"\n✅ الكليبات ({len(clips)}):")
     for c in clips:
-        print(f"  - {c}")
+        size = os.path.getsize(c) // 1024 if os.path.exists(c) else 0
+        print(f"  - {os.path.basename(c)} ({size} KB)")
