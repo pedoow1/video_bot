@@ -2,66 +2,41 @@ name: 🎬 Video Bot - Daily Upload
 
 on:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: '0 16 * * *'   # يشتغل يوميًا
   workflow_dispatch:
 
 jobs:
   make-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # زدنا الوقت عشان التحميل
+    timeout-minutes: 120
 
     steps:
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python 3.11
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 🦕 Install Deno (required by yt-dlp)
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: 🎞️ Install FFmpeg
-        run: sudo apt-get install -y ffmpeg
-
-      - name: 📦 Install Python packages
+      - name: 🎞️ Install FFmpeg + yt-dlp (مع Cookies Support)
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install "curl_cffi>=0.10,<0.15" requests
-
-      - name: 🎥 Install yt-dlp
-        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
-          yt-dlp --version
 
-      - name: 🔤 Download Arabic font
+      # ←←←←← الجزء المهم: Cookies
+      - name: 🔑 Load YouTube Cookies
+        uses: AnimMouse/setup-yt-dlp/cookies@v3
+        with:
+          cookies: ${{ secrets.YOUTUBE_COOKIES }}
+
+      - name: 📦 Install deps
         run: |
-          mkdir -p assets/fonts
-          curl -L "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" \
-               -o assets/fonts/arabic.ttf
-
-      - name: 📁 Create output dirs
-        run: mkdir -p output/audio output/videos output/images output/music output/sfx output/cat_clips
+          pip install -r requirements.txt
 
       - name: 🚀 Run Video Bot
         env:
-          MISTRAL_API_KEY:    ${{ secrets.MISTRAL_API_KEY }}
-          FREESOUND_API_KEY:  ${{ secrets.FREESOUND_API_KEY }}
-          YOUTUBE_API_KEY:    ${{ secrets.YOUTUBE_API_KEY }}     # ← مهم
-          YOUTUBE_TOKEN:      ${{ secrets.YOUTUBE_TOKEN }}
-          GH_TOKEN:           ${{ secrets.GH_TOKEN }}
-          PEXELS_API_KEY:     ${{ secrets.PEXELS_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          # ... باقي الـ secrets
         run: python main.py --cats
-
-      - name: 📋 Upload log artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: videos-log
-          path: output/videos_log.txt
-          if-no-files-found: ignore
