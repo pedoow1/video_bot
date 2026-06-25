@@ -12,9 +12,12 @@ def _search_with_yt_dlp(query: str, max_results: int = 8):
     print(f"   🔍 بحث: {query}")
     try:
         cmd = [
-            "yt-dlp", f"ytsearch{max_results}:{query}",
-            "--flat-playlist", "--print", "%(id)s %(title)s",
-            "--quiet", "--no-warnings"
+            "yt-dlp",
+            f"ytsearch{max_results}:{query}",
+            "--flat-playlist",
+            "--print", "%(id)s %(title)s",
+            "--quiet",
+            "--no-warnings"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         videos = []
@@ -37,21 +40,21 @@ def _download_video(url: str, video_id: str) -> str | None:
     safe_id = _sanitize_id(video_id)
     final_path = os.path.join(CLIPS_DIR, f"yt_{safe_id}.mp4")
 
-    if os.path.exists(final_path) and os.path.getsize(final_path) > 300_000:
+    if os.path.exists(final_path) and os.path.getsize(final_path) > 400_000:
         print(f"   ✅ موجود: {safe_id}")
         return final_path
 
     print(f"   ⬇️ تحميل: {video_id} ...")
 
-    # أبسط وأقوى command لـ GitHub Actions
+    # أفضل command حالياً (مرن جداً)
     cmd = [
         "yt-dlp",
-        "-f", "best",                    # أبسط format (combined)
+        "-f", "bestvideo+bestaudio/best",          # أكثر مرونة
         "--merge-output-format", "mp4",
         "--no-playlist",
-        "--retries", "12",
-        "--fragment-retries", "12",
-        "--extractor-args", "youtube:player_client=ios,web,android",
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--extractor-args", "youtube:player_client=ios,web,android,web_safari",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "--ignore-errors",
         "--no-warnings",
@@ -60,7 +63,7 @@ def _download_video(url: str, video_id: str) -> str | None:
     ]
 
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
         size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
 
         if r.returncode == 0 and size > 600_000:
@@ -69,7 +72,7 @@ def _download_video(url: str, video_id: str) -> str | None:
         else:
             print(f"   ❌ فشل (size={size} bytes | code={r.returncode})")
             if r.stderr:
-                print(f"   stderr: {r.stderr[-600:]}")
+                print(f"   stderr: {r.stderr[-700:]}")
             if os.path.exists(final_path):
                 os.remove(final_path)
             return None
@@ -90,7 +93,7 @@ def fetch_cat_clips(count: int = 10):
     
     print(f"\n🎥 جلب {count} كليبات قطط...\n")
     
-    for q in QUERIES[:5]:
+    for q in QUERIES[:6]:
         videos = _search_with_yt_dlp(q, max_results=8)
         for video in videos:
             if len(downloaded) >= count:
@@ -100,7 +103,7 @@ def fetch_cat_clips(count: int = 10):
                 downloaded.append({"path": path, "title": video["title"], "id": video["id"]})
         if len(downloaded) >= count:
             break
-        time.sleep(6)
+        time.sleep(5)
     
     print(f"\n📥 تم تحميل {len(downloaded)} كليب قطط")
     return downloaded
