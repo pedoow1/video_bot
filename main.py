@@ -110,6 +110,13 @@ def run_cat_pipeline(topic: str = None):
         print("\n🐱 [3/4] جلب كليبات قطط من يوتيوب...")
         cat_clips = fetch_cat_clips(count=len(story["story_paragraphs"]))
 
+        if not cat_clips:
+            raise RuntimeError(
+                "❌ Cat Pipeline: مفيش كليبات قطط — "
+                "Rumble search رجع 0 فيديو. "
+                "تأكد من الـ search queries أو جرب تشغل video_fetcher.py بشكل منفرد."
+            )
+
         # ─── الخطوة 4: صناعة الفيديو ─────────────────────
         print("\n🎬 [4/4] صناعة الفيديو...")
         video_filename = f"cats_{timestamp}.mp4"
