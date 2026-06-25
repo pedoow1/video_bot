@@ -1,5 +1,5 @@
-# video_fetcher.py - جلب مقاطع قطط مضحكة
-# يستخدم yt-dlp على Reddit (يتجاوز الـ 403/429 تلقائيًا)
+# video_fetcher.py - جلب مقاطع قطط مضحكة من Rumble
+# yt-dlp بيشتغل مع Rumble بدون أي blocking من GitHub Actions
 
 import os
 import re
@@ -12,17 +12,20 @@ from config import OUTPUT_DIR
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION = 4.0
-CLIP_MAX_DURATION = 9.0
+CLIP_MAX_DURATION = 15.0  # max 15 ثانية
 
-# URLs مباشرة لـ Reddit subreddits — yt-dlp بيفهمها
-SUBREDDIT_URLS = [
-    "https://www.reddit.com/r/catvideos/",
-    "https://www.reddit.com/r/cats/",
-    "https://www.reddit.com/r/CatsBeingCats/",
-    "https://www.reddit.com/r/CatsAreAssholes/",
-    "https://www.reddit.com/r/AnimalsBeingFunny/",
-    "https://www.reddit.com/r/aww/",
-    "https://www.reddit.com/r/funnyanimals/",
+# search queries على Rumble
+SEARCH_QUERIES = [
+    "funny cats",
+    "cute funny kittens",
+    "cats being silly",
+    "funny cat moments",
+    "cats fail compilation",
+    "hilarious cats",
+    "cats vs cucumbers",
+    "cats scared funny",
+    "kittens playing funny",
+    "cats jumping fail",
 ]
 
 
@@ -31,18 +34,13 @@ def _ensure_ytdlp():
         subprocess.run(["yt-dlp", "--version"], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         print("📦 تثبيت yt-dlp...")
-        subprocess.run(
-            ["pip", "install", "yt-dlp", "-q", "--break-system-packages"],
-            check=True
-        )
+        subprocess.run(["pip", "install", "yt-dlp", "-q", "--break-system-packages"], check=True)
 
 
-def _get_reddit_video_urls(subreddit_url: str, limit: int = 15) -> list:
-    """
-    يستخدم yt-dlp لجلب قائمة الفيديوهات من subreddit.
-    yt-dlp بيتعامل مع Reddit API بشكل صحيح ويتجاوز الـ blocking.
-    """
-    print(f"  📡 {subreddit_url.split('r/')[1].rstrip('/')} ...")
+def _search_rumble(query: str, limit: int = 15) -> list:
+    """يبحث على Rumble عبر yt-dlp مباشرة."""
+    search_url = f"rumble:{query}"
+    print(f"  🔍 Rumble: {query}")
     try:
         cmd = [
             "yt-dlp",
@@ -51,24 +49,29 @@ def _get_reddit_video_urls(subreddit_url: str, limit: int = 15) -> list:
             "--dump-json",
             "--no-warnings",
             "--quiet",
-            # Reddit-specific: جرب بدون login أولًا
-            "--extractor-args", "reddit:max_comments=0",
-            subreddit_url,
+            f"https://rumble.com/search/video?q={query.replace(' ', '+')}",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         videos = []
         for line in result.stdout.strip().splitlines():
-            line = line.strip()
-            if not line:
+            if not line.strip():
                 continue
             try:
                 info = json.loads(line)
                 url = info.get("url") or info.get("webpage_url", "")
-                vid_id = info.get("id", url[-8:] if url else "")
-                title = info.get("title", "")
-                if url and ("reddit" in url or "v.redd.it" in url):
-                    videos.append({"url": url, "id": vid_id, "title": title})
+                duration = info.get("duration") or 999
+                if not url:
+                    continue
+                # نتجاهل فيديوهات أطول من دقيقتين — غالباً compilations
+                if duration > 120:
+                    continue
+                videos.append({
+                    "url":      url,
+                    "id":       re.sub(r"[^a-zA-Z0-9]", "_", info.get("id", url[-10:]))[:20],
+                    "title":    info.get("title", "")[:60],
+                    "duration": duration,
+                })
             except json.JSONDecodeError:
                 continue
 
@@ -76,14 +79,12 @@ def _get_reddit_video_urls(subreddit_url: str, limit: int = 15) -> list:
         return videos
 
     except Exception as e:
-        print(f"  ⚠️ فشل: {e}")
+        print(f"  ⚠️ بحث فشل ({query}): {e}")
         return []
 
 
-def _download_clip(video_url: str, post_id: str, duration: float, out_path: str) -> bool:
-    """
-    يحمّل فيديو Reddit بـ yt-dlp ويقطعه بـ ffmpeg.
-    """
+def _download_clip(video_url: str, post_id: str, target_duration: float, out_path: str) -> bool:
+    """يحمّل فيديو من Rumble ويقطع منه مقطع بالمدة المطلوبة (max 15s)."""
     tmp = os.path.join(CLIPS_DIR, f"_tmp_{post_id}.mp4")
     try:
         # تحميل بـ yt-dlp
@@ -96,33 +97,32 @@ def _download_clip(video_url: str, post_id: str, duration: float, out_path: str)
             "--quiet",
             video_url,
         ]
-        result = subprocess.run(cmd_dl, capture_output=True, timeout=120)
-        if result.returncode != 0 or not os.path.exists(tmp):
-            # جرب بدون format selector
-            cmd_dl2 = [
-                "yt-dlp", "-f", "best",
-                "-o", tmp, "--no-warnings", "--quiet", video_url
-            ]
-            subprocess.run(cmd_dl2, capture_output=True, timeout=90)
+        r = subprocess.run(cmd_dl, capture_output=True, timeout=120)
+        if r.returncode != 0 or not os.path.exists(tmp):
+            # fallback بدون format selector
+            subprocess.run(
+                ["yt-dlp", "-f", "best", "-o", tmp, "--no-warnings", "--quiet", video_url],
+                capture_output=True, timeout=90
+            )
 
         if not os.path.exists(tmp) or os.path.getsize(tmp) < 5000:
             return False
 
-        # احسب مدة الفيديو
+        # مدة الفيديو الفعلية
         vid_dur = _get_duration(tmp)
         if not vid_dur or vid_dur < CLIP_MIN_DURATION:
             return False
 
-        duration = min(duration, vid_dur)
-        max_start = max(0.0, vid_dur - duration)
-        start = random.uniform(max_start * 0.15, max_start * 0.85) if max_start > 0 else 0.0
+        # نقطع بحد أقصى 15 ثانية
+        cut_dur = min(target_duration, vid_dur, CLIP_MAX_DURATION)
+        max_start = max(0.0, vid_dur - cut_dur)
+        start = random.uniform(0, max_start) if max_start > 0 else 0.0
 
-        # تقطيع + تحويل لـ 1080p
         cmd_cut = [
             "ffmpeg", "-y", "-loglevel", "error",
             "-ss", str(round(start, 2)),
             "-i", tmp,
-            "-t", str(round(duration, 2)),
+            "-t", str(round(cut_dur, 2)),
             "-vf", (
                 "scale=1920:1080:force_original_aspect_ratio=decrease,"
                 "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
@@ -133,9 +133,9 @@ def _download_clip(video_url: str, post_id: str, duration: float, out_path: str)
             "-movflags", "+faststart",
             out_path,
         ]
-        r = subprocess.run(cmd_cut, capture_output=True, timeout=90)
-        if r.returncode != 0:
-            print(f"    ⚠️ ffmpeg: {r.stderr.decode()[:120]}")
+        r2 = subprocess.run(cmd_cut, capture_output=True, timeout=90)
+        if r2.returncode != 0:
+            print(f"    ⚠️ ffmpeg: {r2.stderr.decode()[:120]}")
             return False
 
         return os.path.exists(out_path) and os.path.getsize(out_path) > 10_000
@@ -165,7 +165,8 @@ def _get_duration(path: str) -> float | None:
 
 def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     """
-    الدالة الرئيسية — تجيب `count` مقطع من Reddit عبر yt-dlp.
+    تجيب `count` مقطع قطط مضحكة من Rumble.
+    كل مقطع بحد أقصى 15 ثانية.
     """
     _ensure_ytdlp()
     os.makedirs(CLIPS_DIR, exist_ok=True)
@@ -175,35 +176,43 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         print(f"✅ {count} كليب موجودين — مش محتاج تحميل")
         return random.sample(existing, count)
 
-    print(f"🐱 جاري جلب {count} مقطع من Reddit...")
+    print(f"🐱 جاري جلب {count} مقطع من Rumble (max 15s لكل واحد)...")
 
     clips = list(existing)
     needed = count - len(clips)
 
-    # جمّع الفيديوهات من سبريدتات مختلفة
+    # جمّع فيديوهات من queries مختلفة
     all_videos = []
-    subs = random.sample(SUBREDDIT_URLS, min(len(SUBREDDIT_URLS), 3))
-    for sub_url in subs:
-        if len(all_videos) >= needed * 3:
+    queries = random.sample(SEARCH_QUERIES, min(len(SEARCH_QUERIES), 4))
+    for q in queries:
+        if len(all_videos) >= needed * 4:
             break
-        videos = _get_reddit_video_urls(sub_url, limit=20)
-        all_videos.extend(videos)
+        vids = _search_rumble(q, limit=15)
+        all_videos.extend(vids)
         time.sleep(1)
 
     if not all_videos:
         print("  ⚠️ مفيش فيديوهات — هنرجع الموجودين")
-        return clips[:count] if clips else []
+        return clips
 
-    random.shuffle(all_videos)
-    print(f"  📦 {len(all_videos)} فيديو — هنحمّل {needed}")
+    # إزالة التكرار
+    seen = set()
+    unique_videos = []
+    for v in all_videos:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            unique_videos.append(v)
 
-    for video in all_videos:
+    random.shuffle(unique_videos)
+    print(f"  📦 {len(unique_videos)} فيديو — هنحمّل {needed}")
+
+    for video in unique_videos:
         if len(clips) >= count:
             break
 
-        post_id = re.sub(r"[^a-zA-Z0-9]", "_", video["id"])[:20]
+        post_id  = video["id"]
         duration = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
-        clip_path = os.path.join(CLIPS_DIR, f"reddit_{post_id}.mp4")
+        clip_path = os.path.join(CLIPS_DIR, f"rumble_{post_id}.mp4")
 
         if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             clips.append(clip_path)
@@ -213,14 +222,16 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         ok = _download_clip(video["url"], post_id, duration, clip_path)
 
         if ok:
-            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB)")
+            sz = os.path.getsize(clip_path) // 1024
+            print(f"  ✅ جاهز ({sz} KB)")
             clips.append(clip_path)
         else:
             print(f"  ⚠️ فشل — التالي")
 
         time.sleep(0.5)
 
-    if len(clips) < count and clips:
+    # كمّل بالموجودين لو مكملناش
+    if 0 < len(clips) < count:
         print(f"  ⚠️ عندنا {len(clips)} من {count} — هنكرر")
         while len(clips) < count:
             clips.append(random.choice(clips))
@@ -246,17 +257,21 @@ def _get_existing_clips() -> list:
 def clear_clips_cache():
     if not os.path.exists(CLIPS_DIR):
         return
-    n = sum(
-        1 for f in os.listdir(CLIPS_DIR)
-        if f.endswith(".mp4") and not os.remove(os.path.join(CLIPS_DIR, f))
-    )
+    n = 0
+    for f in os.listdir(CLIPS_DIR):
+        if f.endswith(".mp4"):
+            try:
+                os.remove(os.path.join(CLIPS_DIR, f))
+                n += 1
+            except OSError:
+                pass
     print(f"🗑️ مسح {n} كليب")
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار Reddit yt-dlp fetcher...\n")
+    print("🧪 اختبار Rumble fetcher...\n")
     clips = fetch_cat_clips(count=3)
-    print(f"\n✅ النتيجة ({len(clips)}):")
+    print(f"\n✅ ({len(clips)}):")
     for c in clips:
         sz = os.path.getsize(c) // 1024 if os.path.exists(c) else 0
         print(f"  - {os.path.basename(c)} ({sz} KB)")
