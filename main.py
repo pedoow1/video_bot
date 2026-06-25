@@ -5,7 +5,7 @@ import time
 import schedule
 import argparse
 from datetime import datetime
-from story_generator  import generate_story, generate_scene_descriptions, generate_cat_script
+from story_generator  import generate_story, generate_scene_descriptions, generate_cat_script, generate_funny_animals_script
 from tts_engine       import text_to_speech_paragraphs
 from image_fetcher    import get_scene_images
 from video_fetcher    import fetch_cat_clips
@@ -94,8 +94,8 @@ def run_cat_pipeline(topic: str = None):
 
     try:
         # ─── الخطوة 1: توليد السكريبت ─────────────────────
-        print("📝 [1/4] توليد سكريبت القطط بـ Mistral...")
-        story = generate_cat_script(topic)
+        print("📝 [1/4] توليد سكريبت حيوانات مضحكة بـ Mistral...")
+        story = generate_funny_animals_script(topic)
         print(f"   العنوان: {story['title']}")
 
         # ─── الخطوة 2: تحويل النص لصوت ──────────────────
