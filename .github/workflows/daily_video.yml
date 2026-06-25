@@ -34,7 +34,7 @@ jobs:
                -o assets/fonts/arabic.ttf
 
       - name: 📁 Create output dirs
-        run: mkdir -p output/audio output/videos output/images output/music output/sfx
+        run: mkdir -p output/audio output/videos output/images output/music output/sfx output/cat_clips
 
       - name: 🚀 Run Video Bot
         env:
@@ -42,7 +42,7 @@ jobs:
           FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
           YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
           GH_TOKEN:          ${{ secrets.GH_TOKEN }}
-        run: python main.py --now
+        run: python main.py --cats
 
       - name: 📋 Upload log artifact
         if: always()
