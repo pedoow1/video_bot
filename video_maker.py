@@ -783,24 +783,9 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     print("🔗 دمج المشاهد...")
     base_video = concatenate_videoclips(scene_clips, method="compose")
 
-    # ─── 8. Subtitle clips فوق الفيديو ────────────────────
-    subtitle_clips = []
-    if all_word_timings:
-        print("💬 بناء subtitle clips...")
-        sub_lines = _group_timings_into_lines(all_word_timings, chunk_size=5)
-        subtitle_clips = _build_subtitle_clips(
-            sub_lines,
-            scene_start=0.0,
-            font_path=FONT_PATH,
-            font_size=FONT_SIZE_STORY
-        )
-        print(f"  ✅ {len(subtitle_clips)} subtitle clips")
-
-    if subtitle_clips:
-        final_video = CompositeVideoClip([base_video] + subtitle_clips,
-                                         size=(VIDEO_WIDTH, VIDEO_HEIGHT))
-    else:
-        final_video = base_video
+    # ─── 8. Subtitles معطلة نهائياً ───────────────────────
+    # تم إيقاف الـ subtitles بشكل كامل
+    final_video = base_video
 
     # ─── 9. دمج الصوت ─────────────────────────────────────
     final_audio = mix_full_audio(audio_clip, music_path, sfx_entries, total_duration)
@@ -920,24 +905,9 @@ def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
     print("🔗 دمج المشاهد...")
     base_video = concatenate_videoclips(scene_clips, method="compose")
 
-    # ─── 6. Subtitle clips ────────────────────────────────
-    subtitle_clips = []
-    if all_word_timings:
-        print("💬 بناء subtitle clips...")
-        sub_lines = _group_timings_into_lines(all_word_timings, chunk_size=5)
-        subtitle_clips = _build_subtitle_clips(
-            sub_lines,
-            scene_start=0.0,
-            font_path=FONT_PATH,
-            font_size=FONT_SIZE_STORY
-        )
-        print(f"  ✅ {len(subtitle_clips)} subtitle clips")
-
-    if subtitle_clips:
-        final_video = CompositeVideoClip([base_video] + subtitle_clips,
-                                         size=(VIDEO_WIDTH, VIDEO_HEIGHT))
-    else:
-        final_video = base_video
+    # ─── 6. Subtitles معطلة نهائياً ──────────────────────
+    # تم إيقاف الـ subtitles بشكل كامل
+    final_video = base_video
 
     # ─── 7. دمج الصوت ─────────────────────────────────────
     # الكليبات عندها صوت — نخفته ونحط الـ narration فوقيه
