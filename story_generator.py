@@ -228,92 +228,39 @@ Exactly {len(paragraphs)} items."""
 
 def generate_funny_animals_script(topic: str = None, clip_descriptions: list = None) -> dict:
     """
-    يولد سكريبت لفيديو حيوانات مضحكة عامة.
-    لو اتبعتله clip_descriptions (من Pexels) يكتب تعليق مبني على كل كليب فعلاً.
+    يولد سكريبت لفيديو حيوانات مضحكة.
+    الفيديو = إنترو (كلام) + 8 مشاهد صامتة + خاتمة (كلام).
+    المشاهد الـ8 الوسطى فاضية — الفيديو بيتكلم بنفسه.
     الفيديو ~5 دقائق (10 مشاهد × ~30 ثانية).
     """
-    chosen_topic = topic or "funny animals doing silly things"
+    chosen_topic = topic or "funny animals"
 
-    # لو عندنا descriptions من Pexels — نبني الـ prompt عليهم
-    if clip_descriptions and len(clip_descriptions) >= 10:
-        clips_section = "\n".join(
-            f"Clip {i+1}: {desc}" for i, desc in enumerate(clip_descriptions[:10])
-        )
-        prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
+    prompt = f"""You are a warm and energetic YouTube host for a funny animals compilation channel.
 
-You are about to commentate on 10 real animal video clips from Pexels. Here are the clips:
-
-{clips_section}
-
-Write a funny narration for EACH clip. Your commentary should:
-- Be inspired by the clip description (what type of animal, what mood/action it suggests)
-- Stay fun and energetic — like a charismatic YouTube host reacting live
-- Each scene: 2-4 punchy sentences
-- Talk to viewer: "watch this", "you won't believe it", "I can't"
-- NEVER make up specific fake details not suggested by the description
-- Keep energy HIGH — this is a 5-minute compilation
-- EXACTLY 10 scenes
-
-The title MUST say "5 Minutes" since the video is ~5 minutes long.
+Write ONLY an intro and outro for a funny animals video about: "{chosen_topic}"
 
 Reply with JSON ONLY:
 {{
-  "title": "funny animals title under 60 chars — MUST include '5 Minutes'",
-  "description": "YouTube description 60-80 words, funny tone, mentions funny animals compilation, ends with CTA",
+  "title": "catchy funny animals title under 60 chars (e.g. 'Funny Animals That Will Make Your Day 😂')",
+  "description": "YouTube description 60-80 words, funny/warm tone, mentions funny animals compilation, ends with CTA to like and subscribe",
   "tags": ["funnyanimals", "animals", "cute", "compilation", "funnypets", "animalsbeingidiots", "funny", "lol"],
-  "story_paragraphs": [
-    "scene 1 narration...",
-    "scene 2 narration...",
-    "... exactly 10 items ..."
-  ],
+  "intro": "Welcome back everyone! Today we've got an incredible collection of funny animals that are guaranteed to make your day. These little guys are absolutely hilarious — sit back, relax, and enjoy the show!",
+  "outro": "And that's a wrap on today's funny animals compilation! I hope these adorable chaos creators put a big smile on your face. If they did, smash that like button and subscribe so you never miss a video. Drop your favorite animal in the comments below — I'll catch you in the next one!",
   "bg_keyword": "animals",
   "mood": "happy"
 }}
 
-CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 Minutes'."""
+Rules for intro:
+- Warm welcome: "Welcome back everyone!" or "Hey guys, welcome back!"
+- Mention what the video is about: a collection of funny/cute animals
+- Keep it SHORT — 2-3 sentences max
+- NO mention of specific animal names or clip details
 
-    else:
-        # fallback لو مفيش descriptions
-        prompt = f"""You are a funny, energetic YouTube narrator for a viral funny animals compilation channel.
-
-Write a video script for: "{chosen_topic}"
-
-The script has EXACTLY 10 short scenes. Each scene is a GENERAL funny reaction to an animal clip —
-WITHOUT claiming specific details about what the animal is doing (because we don't know the exact clip).
-
-CORRECT style — general reactions that work for ANY funny animal clip:
-- "Look at this guy — he has absolutely no idea what he's doing, and honestly, same."
-- "The confidence! The audacity! This animal woke up and chose chaos today."
-- "I don't know what's happening here, but I love it. This is peak animal behavior right there."
-- "When you think you're the boss but life has other plans... watch this."
-- "Scientists say animals don't have emotions. Scientists have clearly never seen this."
-
-Rules:
-- Each scene: 2-4 sentences of funny, punchy commentary
-- React with GENERAL humor that fits ANY funny animal moment
-- Mix different animals: dogs, cats, birds, monkeys, raccoons, pandas — variety!
-- Use "this animal", "this guy", "this creature", "our hero"
-- Talk to viewer: "watch this", "you won't believe it", "I can't"
-- Keep energy HIGH — this is a 5-minute compilation
-- EXACTLY 10 scenes
-
-The title MUST say "5 Minutes" since the video is ~5 minutes long.
-
-Reply with JSON ONLY:
-{{
-  "title": "funny animals title under 60 chars — MUST include '5 Minutes' (e.g. 'Animals Being Idiots for 5 Minutes')",
-  "description": "YouTube description 60-80 words, funny tone, mentions funny animals compilation, ends with CTA",
-  "tags": ["funnyanimals", "animals", "cute", "compilation", "funnypets", "animalsbeingidiots", "funny", "lol"],
-  "story_paragraphs": [
-    "scene 1 narration...",
-    "scene 2 narration...",
-    "... exactly 10 items ..."
-  ],
-  "bg_keyword": "animals",
-  "mood": "happy"
-}}
-
-CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 Minutes'."""
+Rules for outro:
+- Thank viewers for watching
+- Ask them to like, subscribe, leave a comment
+- Keep it SHORT — 2-3 sentences max
+- Energetic and warm tone"""
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -322,12 +269,14 @@ CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 
     payload = {
         "model":           "mistral-small-2506",
         "messages":        [{"role": "user", "content": prompt}],
-        "max_tokens":      40000,
-        "temperature":     0.85,
+        "max_tokens":      2000,
+        "temperature":     0.8,
         "response_format": {"type": "json_object"},
     }
 
-    print(f"📝 جاري توليد سكريبت حيوانات مضحكة: {chosen_topic}")
+    print(f"📝 جاري توليد إنترو + خاتمة لفيديو: {chosen_topic}")
+
+    SCENE_COUNT = 10  # إنترو + 8 صامتة + خاتمة
 
     try:
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
@@ -336,26 +285,27 @@ CRITICAL: story_paragraphs must contain EXACTLY 10 items. Title MUST contain '5 
         raw  = re.sub(r"```json|```", "", raw).strip()
         data = json.loads(raw)
 
-        data["full_story"] = " ".join(data.get("story_paragraphs", []))
+        intro = data.get("intro", "Welcome back everyone! Today we have an amazing collection of funny animals. Sit back and enjoy!")
+        outro = data.get("outro", "That's all for today! If you enjoyed this, smash that like button and subscribe. See you in the next one!")
+
+        # story_paragraphs = إنترو + 8 فاضيين (silence) + خاتمة
+        # المشاهد الصامتة بيبقى فيها نص فاضي — الـ video_maker هيتعامل معاها كـ silence
+        story_paragraphs = (
+            [intro]
+            + [""] * (SCENE_COUNT - 2)   # 8 مشاهد صامتة
+            + [outro]
+        )
+
+        data["story_paragraphs"] = story_paragraphs
+        data["full_story"] = intro + " " + outro
         data.setdefault("bg_keyword", "animals")
         data.setdefault("mood", "happy")
         data.setdefault("tags", ["funnyanimals", "animals", "compilation", "funny"])
 
-        # تأكد إن العنوان فيه "5 Minutes"
-        title = data.get("title", "")
-        if "5 Minutes" not in title and "5 minutes" not in title:
-            data["title"] = title.rstrip(".!") + " for 5 Minutes"
-
-        paras = data.get("story_paragraphs", [])
-        if len(paras) != 10:
-            print(f"⚠️ رجّع {len(paras)} بدل 10 — جاري التصحيح...")
-            if len(paras) > 10:
-                data["story_paragraphs"] = paras[:10]
-            else:
-                while len(data["story_paragraphs"]) < 10:
-                    data["story_paragraphs"].append(data["story_paragraphs"][-1])
-
         print(f"✅ السكريبت جاهز: {data['title']}")
+        print(f"   إنترو: {intro[:60]}...")
+        print(f"   8 مشاهد صامتة")
+        print(f"   خاتمة: {outro[:60]}...")
         return data
 
     except Exception as e:
