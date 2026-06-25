@@ -226,8 +226,95 @@ Exactly {len(paragraphs)} items."""
     raise RuntimeError("generate_scene_descriptions فشل بعد 3 محاولات")
 
 
+def generate_cat_script(topic: str = None) -> dict:
+    """
+    يولد سكريبت لفيديو قطط مضحكة — كل فقرة بتوصف مشهد قطة.
+    المذيع بيوصف اللي بيحصل بشكل مضحك وخفيف.
+    """
+    chosen_topic = topic or "funny cats doing silly things"
+
+    prompt = f"""You are a funny, energetic YouTube narrator for a cats compilation channel.
+
+Write a video script for: "{chosen_topic}"
+
+The script has EXACTLY 10 short scenes. Each scene describes what a cat is doing in a funny/cute clip,
+as if the narrator is reacting live to watching the clip.
+
+Style examples:
+- "Oh no, this cat just discovered the Christmas tree and looks absolutely OFFENDED by it. Watch those eyes..."
+- "This little guy has been staring at this wall for THREE hours. There is nothing on that wall. Nothing."
+- "The cat saw the cucumber. The cat did NOT appreciate the cucumber."
+
+Rules:
+- Each scene is 2-3 sentences MAX — short, punchy, funny
+- React TO the clip, don't just describe it
+- Use humor, surprise, sarcasm — make it entertaining
+- Talk to the viewer: "watch this", "look at his face", "you won't believe what happens next"
+- Keep energy HIGH throughout
+- EXACTLY 10 scenes
+
+Reply with JSON ONLY:
+{{
+  "title": "funny title under 60 chars (e.g. 'Cats Being Absolute Idiots for 5 Minutes')",
+  "description": "YouTube description 60-80 words, funny tone, ends with CTA",
+  "tags": ["cats", "funnycats", "catsofyoutube", "catvideos", "funnyanimals", "cute", "compilation", "lol"],
+  "story_paragraphs": [
+    "scene 1 narration...",
+    "scene 2 narration...",
+    "... exactly 10 items ..."
+  ],
+  "bg_keyword": "cats",
+  "mood": "happy"
+}}
+
+CRITICAL: story_paragraphs must contain EXACTLY 10 items."""
+
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type":  "application/json"
+    }
+    payload = {
+        "model":           "mistral-small-2506",
+        "messages":        [{"role": "user", "content": prompt}],
+        "max_tokens":      40000,
+        "temperature":     0.85,
+        "response_format": {"type": "json_object"},
+    }
+
+    print(f"📝 جاري توليد سكريبت قطط: {chosen_topic}")
+
+    try:
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        raw  = response.json()["choices"][0]["message"]["content"]
+        raw  = re.sub(r"```json|```", "", raw).strip()
+        data = json.loads(raw)
+
+        data["full_story"] = " ".join(data.get("story_paragraphs", []))
+        data.setdefault("bg_keyword", "cats")
+        data.setdefault("mood", "happy")
+        data.setdefault("tags", ["cats", "funnycats", "compilation"])
+
+        paras = data.get("story_paragraphs", [])
+        if len(paras) != 10:
+            print(f"⚠️ رجّع {len(paras)} بدل 10 — جاري التصحيح...")
+            if len(paras) > 10:
+                data["story_paragraphs"] = paras[:10]
+            else:
+                while len(data["story_paragraphs"]) < 10:
+                    data["story_paragraphs"].append(data["story_paragraphs"][-1])
+
+        print(f"✅ السكريبت جاهز: {data['title']}")
+        return data
+
+    except Exception as e:
+        print(f"❌ خطأ في توليد سكريبت القطط: {e}")
+        raise
+
+
 if __name__ == "__main__":
     story = generate_story()
     print(f"\nالعنوان: {story['title']}")
     print(f"الموود: {story['mood']}")
     print(f"\nأول حقيقة:\n{story['story_paragraphs'][0]}")
+
