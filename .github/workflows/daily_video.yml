@@ -2,13 +2,13 @@ name: 🎬 Daily Video Bot
 
 on:
   schedule:
-    - cron: '0 17 * * *'     # يشتغل كل يوم الساعة 5 مساءً بتوقيت UTC (عدله حسبك)
-  workflow_dispatch:         # عشان تقدر تشغله يدوي
+    - cron: '0 17 * * *'     # يومياً الساعة 5 مساءً UTC
+  workflow_dispatch:
 
 jobs:
   video-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: 📥 Checkout Repository
@@ -26,18 +26,15 @@ jobs:
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
 
-      # 🔥 الكوكيز
       - name: 🔑 Load YouTube Cookies
         uses: AnimMouse/setup-yt-dlp/cookies@v3
         with:
           cookies: ${{ secrets.YOUTUBE_COOKIES }}
 
       - name: 📦 Install Requirements
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: 🚀 Run Video Fetcher & Uploader
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          # أضف باقي الـ secrets اللي عندك (YOUTUBE_API_KEY, etc.)
-        run: python main.py
+        run: python main.py --now --cats
