@@ -32,6 +32,92 @@ SEARCH_QUERIES = [
 ]
 
 
+def _search_youtube_api(query: str, max_results: int = 10) -> list:
+    """
+    يبحث على يوتيوب بدون API key — بيعمل request عادي زي المتصفح
+    ويستخرج الـ video IDs من الـ HTML.
+    """
+    print(f"  🔍 بيبحث: {query}")
+    try:
+        import urllib.parse
+        encoded = urllib.parse.quote(query)
+        url = f"https://www.youtube.com/results?search_query={encoded}&sp=EgIwAQ%3D%3D"
+        # EgIwAQ%3D%3D = فلتر Creative Commons
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+
+        # استخراج video IDs من الـ HTML
+        import re
+        video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
+        # إزالة التكرار مع الحفاظ على الترتيب
+        seen = set()
+        unique_ids = []
+        for vid_id in video_ids:
+            if vid_id not in seen:
+                seen.add(vid_id)
+                unique_ids.append(vid_id)
+
+        unique_ids = unique_ids[:max_results]
+
+        videos = []
+        for vid_id in unique_ids:
+            videos.append({
+                "url":      f"https://www.youtube.com/watch?v={vid_id}",
+                "title":    vid_id,  # هنعرف العنوان من yt-dlp وقت التحميل
+                "duration": 120,
+                "id":       vid_id,
+            })
+
+        print(f"  ✅ لقى {len(videos)} فيديو")
+        return videos
+
+    except Exception as e:
+        print(f"  ⚠️ scraping فشل: {e} — fallback لـ yt-dlp")
+        return _search_ytdlp(query, max_results)
+
+
+def _search_ytdlp(query: str, max_results: int = 10) -> list:
+    """Fallback: بحث بـ yt-dlp"""
+    try:
+        cmd = [
+            "yt-dlp",
+            f"ytsearch{max_results}:{query}",
+            "--dump-json",
+            "--no-download",
+            "--quiet",
+            "--no-warnings",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        videos = []
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                info = json.loads(line)
+                url = info.get("webpage_url") or info.get("url")
+                if not url:
+                    continue
+                videos.append({
+                    "url":      url,
+                    "title":    info.get("title", ""),
+                    "duration": info.get("duration", 120) or 120,
+                    "id":       info.get("id", ""),
+                })
+            except json.JSONDecodeError:
+                continue
+        print(f"  ✅ yt-dlp: لقى {len(videos)} فيديو")
+        return videos
+    except Exception as e:
+        print(f"  ⚠️ yt-dlp فشل: {e}")
+        return []
+
+
 def _install_ytdlp():
     """يثبت yt-dlp لو مش موجود"""
     try:
@@ -46,50 +132,8 @@ def _install_ytdlp():
 
 
 def _search_youtube_cc(query: str, max_results: int = 10) -> list:
-    """
-    يبحث على يوتيوب عن فيديوهات Creative Commons.
-    يرجع list من dicts فيها url, title, duration.
-    """
-    print(f"  🔍 بيبحث: {query}")
-    try:
-        cmd = [
-            "yt-dlp",
-            f"ytsearch{max_results}:{query}",
-            "--dump-json",
-            "--no-download",
-            "--quiet",
-            "--no-warnings",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-
-        videos = []
-        for line in result.stdout.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                info = json.loads(line)
-                url = info.get("webpage_url") or info.get("url")
-                if not url:
-                    continue
-                videos.append({
-                    "url":      url,
-                    "title":    info.get("title", ""),
-                    "duration": info.get("duration", 0) or 0,
-                    "id":       info.get("id", ""),
-                })
-            except json.JSONDecodeError:
-                continue
-
-        print(f"  ✅ لقى {len(videos)} فيديو")
-        return videos
-
-    except subprocess.TimeoutExpired:
-        print("  ⚠️ البحث استغرق وقت طويل — تخطي")
-        return []
-    except Exception as e:
-        print(f"  ⚠️ خطأ في البحث: {e}")
-        return []
+    """يبحث على يوتيوب — يجرب API أولاً ثم yt-dlp"""
+    return _search_youtube_api(query, max_results)
 
 
 def _download_video_segment(url: str, video_id: str, start: float, duration: float, out_path: str) -> bool:
