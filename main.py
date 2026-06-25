@@ -155,7 +155,7 @@ def run_cat_pipeline(topic: str = None):
         return None
 
 
-(story: dict, video_id: str, elapsed: float):
+def log_video(story: dict, video_id: str, elapsed: float):
     """يحفظ سجل بكل الفيديوهات اللي اتنشرت"""
     log_path = os.path.join(OUTPUT_DIR, "videos_log.txt")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
