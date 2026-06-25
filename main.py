@@ -104,13 +104,9 @@ def run_cat_pipeline(topic: str = None):
                 "Pexels رجع 0 فيديو. تأكد من PEXELS_API_KEY."
             )
 
-        # استخرج الـ descriptions عشان نبعتها لـ Mistral
-        clip_descriptions = [c["description"] for c in cat_clips_data]
-        print(f"   ✅ {len(clip_descriptions)} كليب جاهز — بنبعت الـ descriptions لـ Mistral")
-
-        # ─── الخطوة 2: توليد السكريبت بناءً على الكليبات الفعلية ──
-        print("\n📝 [2/4] توليد سكريبت مبني على الكليبات الفعلية بـ Mistral...")
-        story = generate_funny_animals_script(topic, clip_descriptions=clip_descriptions)
+        # ─── الخطوة 2: توليد الإنترو والخاتمة فقط ──────────
+        print("\n📝 [2/4] توليد إنترو + خاتمة بـ Mistral...")
+        story = generate_funny_animals_script(topic)  # بدون clip_descriptions
         print(f"   العنوان: {story['title']}")
 
         # ─── الخطوة 3: تحويل النص لصوت ──────────────────
