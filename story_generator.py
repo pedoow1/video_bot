@@ -151,28 +151,41 @@ def generate_scene_descriptions(paragraphs: list, story_title: str) -> list:
         f"[Fact {i+1}]: {p}" for i, p in enumerate(paragraphs)
     )
 
-    prompt = f"""You are a visual director for a YouTube "10 Amazing Facts" video titled: "{story_title}"
+    prompt = f"""You are a visual researcher for a YouTube facts video titled: "{story_title}"
 
-For EACH fact below, write a detailed description of the IDEAL real photograph that would visually represent this fact.
+For EACH scene below, write a search description for finding the perfect real photograph.
 
-The description should:
-- Describe the actual subject of the fact (e.g. "A high-resolution NASA photo of the surface of Mars showing the Olympus Mons volcano")
-- Be specific enough that someone could find the exact real image online
-- Mention the specific subject, setting, and visual details
-- NOT describe illustrations, diagrams, or generic stock photos
-- Be 1-2 sentences max
+Follow these rules STRICTLY:
 
-Facts:
+1. FAMOUS PERSON mentioned → write: "Photo of [Full Name], [brief who they are], [physical appearance or notable feature]"
+   Example: "Photo of Dr. John Hollowman, American scientist known for hibernation research, wearing a lab coat in a laboratory setting"
+
+2. ANIMAL → write the species name + specific visual detail
+   Example: "A brown bear in deep hibernation inside a cave den, curled up, eyes closed"
+
+3. PLACE or LOCATION → name the exact place + what makes it visually distinctive
+   Example: "Inside a NASA cryogenics laboratory with silver pods and tubes, scientists in white suits"
+
+4. OBJECT or CONCEPT → describe what it physically looks like in real life
+   Example: "Close-up of a human brain scan MRI showing neural activity patterns lit up in bright colors"
+
+5. EVENT or EXPERIMENT → describe the scene as if it's a photograph
+   Example: "Scientists in hazmat suits monitoring frozen human cells under microscope in a sterile lab"
+
+NEVER write vague or generic descriptions like "a person doing something" or "related to the topic".
+ALWAYS be specific enough that searching for this description online would find the exact right image.
+
+Scenes:
 {paragraphs_text}
 
-Reply with JSON ONLY in this exact shape:
+Reply with JSON ONLY:
 {{"descriptions": [
-  "description for fact 1",
-  "description for fact 2",
+  "description for scene 1",
+  "description for scene 2",
   ...
 ]}}
 
-Exactly {len(paragraphs)} items. Be specific and visual."""
+Exactly {len(paragraphs)} items."""
 
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
