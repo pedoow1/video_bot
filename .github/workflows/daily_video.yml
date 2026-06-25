@@ -2,7 +2,7 @@ name: 🎬 Video Bot - Daily Upload
 
 on:
   schedule:
-    - cron: '0 15 * * *'
+    - cron: '0 16 * * *'
   workflow_dispatch:
 
 jobs:
@@ -43,7 +43,6 @@ jobs:
           FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
           YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
           GH_TOKEN:          ${{ secrets.GH_TOKEN }}
-          PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
         run: python main.py --cats
 
       - name: 📋 Upload log artifact
