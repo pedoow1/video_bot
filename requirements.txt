@@ -1,7 +1,7 @@
 requests
 curl_cffi>=0.10,<0.15
 moviepy==1.0.3
-Pillow
+Pillow<10.0.0
 edge-tts
 google-api-python-client
 google-auth-httplib2
