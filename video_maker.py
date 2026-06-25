@@ -460,12 +460,14 @@ def get_word_timings_sync(text: str, voice: str) -> list:
         return []
 
 
-def _group_timings_into_lines(word_timings: list, max_words: int = 2) -> list:
+def _group_timings_into_lines(word_timings: list, chunk_size: int = 5) -> list:
     """
-    يجمّع الكلمات في chunks صغيرة (2 كلمة).
-    يرجع list من: (words_list, highlighted_index, start_sec, end_sec)
-    words_list = الكلمات في الـ chunk
-    highlighted_index = index الكلمة الحالية (دايماً 0 أو 1)
+    يقسم الكلمات لـ chunks من chunk_size كلمات.
+    لكل كلمة في الـ chunk، يعمل entry بـ:
+      - الـ chunk كله (5 كلمات)
+      - index الكلمة الحالية (highlighted بالأصفر)
+      - توقيت بداية ونهاية الكلمة دي
+    يرجع list من: (words_list, highlight_idx, start_sec, end_sec)
     """
     if not word_timings:
         return []
@@ -473,22 +475,21 @@ def _group_timings_into_lines(word_timings: list, max_words: int = 2) -> list:
     lines = []
     i = 0
     while i < len(word_timings):
-        chunk = word_timings[i:i + max_words]
+        chunk = word_timings[i:i + chunk_size]
         words = [w[0] for w in chunk]
-        # كل كلمة تتعرض لوحدها كـ highlighted مع الكلمة اللي قبلها/بعدها
         for j, (word, start, end) in enumerate(chunk):
-            # نعرض الكلمتين بس، الحالية highlighted
-            display_words = words
-            lines.append((display_words, j, start, end))
-        i += max_words
+            lines.append((words, j, start, end))
+        i += chunk_size
 
     return lines
 
 
 def _build_subtitle_clips(subtitle_lines: list, scene_start: float,
-                           font_path: str, font_size: int = 70) -> list:
+                           font_path: str, font_size: int = 68) -> list:
     """
-    يبني ImageClip لكل كلمة — الكلمة الحالية أصفر، الباقي أبيض.
+    يبني ImageClip لكل كلمة — الـ chunk كله ظاهر،
+    الكلمة الحالية بالأصفر والباقي أبيض.
+    كل clip مدته من بداية الكلمة لنهايتها بالظبط.
     """
     clips = []
 
@@ -496,18 +497,21 @@ def _build_subtitle_clips(subtitle_lines: list, scene_start: float,
         rel_start = abs_start - scene_start
         duration  = abs_end - abs_start
 
-        if duration <= 0:
+        if duration <= 0.01:
             continue
 
         try:
-            sub_img  = _render_subtitle_image(words, highlight_idx, font_path, font_size)
-            sub_path = f"/tmp/sub_{hash(str(words))}_{int(rel_start*1000)}.png"
+            # كل frame مختلف عن التاني بس في لون الكلمة المهايلايتة
+            cache_key = f"{'_'.join(words)}_{highlight_idx}"
+            sub_path  = f"/tmp/sub_{abs(hash(cache_key))}.png"
+
+            sub_img = _render_subtitle_image(words, highlight_idx, font_path, font_size)
             sub_img.save(sub_path)
 
             sub_clip = (ImageClip(sub_path, ismask=False)
                         .set_start(rel_start)
                         .set_duration(duration)
-                        .set_position(("center", VIDEO_HEIGHT - 160)))
+                        .set_position(("center", VIDEO_HEIGHT - 170)))
             clips.append(sub_clip)
 
         except Exception as e:
@@ -517,53 +521,61 @@ def _build_subtitle_clips(subtitle_lines: list, scene_start: float,
 
 
 def _render_subtitle_image(words: list, highlight_idx: int,
-                            font_path: str, font_size: int = 70) -> Image.Image:
+                            font_path: str, font_size: int = 68) -> Image.Image:
     """
-    يرسم الكلمات بخط bold كبير:
-    - الكلمة highlighted: أصفر (#FFE500) + uppercase
+    يرسم الـ chunk كله على سطر واحد:
+    - الكلمة highlighted (اللي بيقولها دلوقتي): أصفر + أكبر شوية
     - باقي الكلمات: أبيض
-    - ظل أسود لكل الكلمات
+    - ظل أسود قوي لكل الكلمات للوضوح
+    - الصورة بعرض الفيديو كامل عشان تتوسط صح
     """
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font_normal = ImageFont.truetype(font_path, font_size)
+        font_highlight = ImageFont.truetype(font_path, int(font_size * 1.15))
     except Exception:
-        font = ImageFont.load_default()
+        font_normal = ImageFont.load_default()
+        font_highlight = font_normal
 
-    dummy_img  = Image.new("RGBA", (1, 1))
-    dummy_draw = ImageDraw.Draw(dummy_img)
-    shadow     = 3
-    padding_x  = 30
-    padding_y  = 20
-    gap        = 18  # مسافة بين الكلمات
+    dummy_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    shadow    = 4
+    gap       = 22
 
-    # نحسب عرض كل كلمة
-    word_sizes = []
+    # نحسب حجم كل كلمة
+    word_data = []
     for i, w in enumerate(words):
-        display = w.upper() if i == highlight_idx else w.upper()
-        bbox = dummy_draw.textbbox((0, 0), display, font=font)
-        word_sizes.append((display, bbox[2] - bbox[0], bbox[3] - bbox[1]))
+        display = w.upper()
+        f = font_highlight if i == highlight_idx else font_normal
+        bbox = dummy_draw.textbbox((0, 0), display, font=f)
+        word_data.append({
+            "text":  display,
+            "font":  f,
+            "w":     bbox[2] - bbox[0],
+            "h":     bbox[3] - bbox[1],
+            "color": (255, 229, 0, 255) if i == highlight_idx else (255, 255, 255, 255),
+        })
 
-    total_w = sum(ws[1] for ws in word_sizes) + gap * (len(words) - 1) + padding_x * 2
-    max_h   = max(ws[2] for ws in word_sizes) + padding_y * 2
+    total_w = sum(d["w"] for d in word_data) + gap * (len(word_data) - 1)
+    max_h   = max(d["h"] for d in word_data)
 
-    img  = Image.new("RGBA", (total_w + shadow*2, max_h + shadow*2), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    # الصورة بعرض الفيديو كامل
+    img_w = VIDEO_WIDTH
+    img_h = max_h + shadow * 2 + 20
+    img   = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw  = ImageDraw.Draw(img)
 
-    x = padding_x
-    y = padding_y
+    # نبدأ من المنتصف
+    x = (img_w - total_w) // 2
+    y = 10
 
-    for i, (display, w, h) in enumerate(word_sizes):
-        color = (255, 229, 0, 255) if i == highlight_idx else (255, 255, 255, 255)
-
-        # ظل أسود
-        for dx, dy in [(-shadow, -shadow), (shadow, -shadow),
-                       (-shadow, shadow),  (shadow, shadow),
-                       (0, shadow), (0, -shadow), (shadow, 0), (-shadow, 0)]:
-            draw.text((x + dx, y + dy), display, font=font, fill=(0, 0, 0, 255))
-
+    for d in word_data:
+        # ظل من كل الاتجاهات
+        for dx, dy in [(-shadow, 0), (shadow, 0), (0, -shadow), (0, shadow),
+                       (-shadow, -shadow), (shadow, -shadow),
+                       (-shadow, shadow), (shadow, shadow)]:
+            draw.text((x + dx, y + dy), d["text"], font=d["font"], fill=(0, 0, 0, 255))
         # الكلمة بلونها
-        draw.text((x, y), display, font=font, fill=color)
-        x += w + gap
+        draw.text((x, y), d["text"], font=d["font"], fill=d["color"])
+        x += d["w"] + gap
 
     return img
 
@@ -769,7 +781,7 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     subtitle_clips = []
     if all_word_timings:
         print("💬 بناء subtitle clips...")
-        sub_lines = _group_timings_into_lines(all_word_timings, max_words=2)
+        sub_lines = _group_timings_into_lines(all_word_timings, max_words=5)
         subtitle_clips = _build_subtitle_clips(
             sub_lines,
             scene_start=0.0,
