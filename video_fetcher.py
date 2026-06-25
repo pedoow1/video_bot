@@ -17,7 +17,7 @@ TARGET_VIDEO_DURATION = 300
 YOUTUBE_QUERIES = [
     "funny cats", "cute kittens", "hilarious cats", "cat fails",
     "funny dogs", "cute funny animals", "kittens playing", "funny pets",
-    "puppy fails", "hilarious pets", "funny cat videos"
+    "puppy fails", "hilarious pets", "funny cat videos", "cute cats compilation"
 ]
 
 
@@ -55,7 +55,7 @@ def _search_youtube(query: str, max_results: int = 12) -> list:
             "yt-dlp", "--dump-json", "--flat-playlist", "--no-playlist",
             "--match-filter", "duration > 15 & duration < 180",
             "--quiet", "--no-warnings", "--js-runtimes", "deno",
-            "--extractor-args", "youtube:player_client=web,ios,android,web_embedded",
+            "--extractor-args", "youtube:player_client=web,ios,android",
             "--ignore-errors", f"ytsearch{max_results}:{query}"
         ]
         print(f"  🔍 بحث: {query}")
@@ -110,6 +110,8 @@ def _download_video(url: str, video_id: str) -> str | None:
             return tmp_path
         else:
             print(f"  ⚠️ تحميل فشل | exit: {r.returncode}")
+            if r.stderr:
+                print(f"     {r.stderr[-300:]}")
             return None
     except Exception as e:
         print(f"  ⚠️ خطأ تحميل: {e}")
@@ -124,19 +126,18 @@ def _fetch_from_youtube(count: int, clip_duration: float) -> list:
 
     for q in queries:
         all_videos.extend(_search_youtube(q))
-        time.sleep(1.2)
+        time.sleep(1.0)
 
-    # إزالة التكرارات
     seen = set()
     unique_videos = [v for v in all_videos if v["id"] not in seen and not seen.add(v["id"])]
-
     random.shuffle(unique_videos)
 
-    for video in unique_videos[:count*2]:   # نجرب أكتر عشان نتأكد
+    for video in unique_videos:
         if len(clips) >= count:
             break
 
         clip_path = os.path.join(CLIPS_DIR, f"yt_{_sanitize_id(video['id'])}.mp4")
+
         if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             clips.append({"path": clip_path, "description": video["title"], "youtube_url": video["url"]})
             continue
@@ -144,9 +145,14 @@ def _fetch_from_youtube(count: int, clip_duration: float) -> list:
         tmp = _download_video(video["url"], video["id"])
         if tmp and _cut_clip(tmp, clip_path, clip_duration or 20):
             clips.append({"path": clip_path, "description": video["title"], "youtube_url": video["url"]})
-        if os.path.exists(tmp):
-            try: os.remove(tmp)
-            except: pass
+            print(f"  ✅ جاهز: {video['title'][:50]}")
+
+        # حذف المؤقت بأمان
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except:
+                pass
 
     return clips
 
@@ -158,15 +164,18 @@ def fetch_cat_clips(count: int = 10, clip_duration: float = None) -> list:
 
     existing = _get_existing_clips()
     if len(existing) >= count:
+        print(f"✅ استخدام {count} كليب موجود")
         return random.sample(existing, count)
 
-    yt_clips = _fetch_from_youtube(count - len(existing), clip_duration)
-    clips = existing + yt_clips
+    needed = count - len(existing)
+    print(f"🎥 جاري جلب {needed} مقطع جديد...")
+    yt_clips = _fetch_from_youtube(needed, clip_duration)
 
+    clips = existing + yt_clips
     while len(clips) < count and clips:
         clips.append(random.choice(clips))
 
-    print(f"✅ {len(clips)} مقطع جاهز!")
+    print(f"✅ إجمالي {len(clips)} مقطع جاهز!")
     return clips[:count]
 
 
@@ -175,8 +184,10 @@ def _get_existing_clips() -> list:
         return []
     clips = []
     for f in os.listdir(CLIPS_DIR):
-        if f.endswith(".mp4") and not f.startswith("_tmp") and os.path.getsize(os.path.join(CLIPS_DIR, f)) > 10_000:
-            clips.append({"path": os.path.join(CLIPS_DIR, f), "description": f"cached: {f}", "youtube_url": ""})
+        if f.endswith(".mp4") and not f.startswith("_tmp"):
+            full_path = os.path.join(CLIPS_DIR, f)
+            if os.path.getsize(full_path) > 10_000:
+                clips.append({"path": full_path, "description": f"cached: {f}", "youtube_url": ""})
     random.shuffle(clips)
     return clips
 
