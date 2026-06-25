@@ -168,20 +168,26 @@ def text_to_speech_paragraphs(paragraphs: list, base_filename: str = "audio") ->
 
         d = get_audio_duration(p_path)
         paragraph_paths.append(p_path)
-        durations.append(d)
+
+        # نحسب الـ silence في بداية الفقرة (edge-tts بيضيف silence قبل الكلام)
+        # الكلمة الأولى في الـ timings بتحدد إمتى بدأ الكلام فعلاً
+        para_silence = timings[0][1] if timings else 0.0
+        # مدة الفقرة الفعلية = مدة الصوت - الـ silence في الأول
+        effective_duration = d - para_silence
+        durations.append(effective_duration)
 
         if not timings:
             print(f"     ⚠️ فقرة {i+1}: مفيش word timings — subtitles مش هتظهر لهذه الفقرة")
         else:
-            print(f"     ⏱️ {d:.1f}s — {len(timings)} كلمة ✅")
+            print(f"     ⏱️ {d:.1f}s (silence: {para_silence:.2f}s) — {len(timings)} كلمة ✅")
 
-        # تحويل timing من relative → absolute
+        # تحويل timing من relative → absolute مع إزالة الـ silence
         for word, rel_start, rel_end in timings:
-            all_word_timings.append((word,
-                                     rel_start + cumulative_offset,
-                                     rel_end   + cumulative_offset))
+            adjusted_start = (rel_start - para_silence) + cumulative_offset
+            adjusted_end   = (rel_end   - para_silence) + cumulative_offset
+            all_word_timings.append((word, adjusted_start, adjusted_end))
 
-        cumulative_offset += d
+        cumulative_offset += effective_duration
 
     # دمج ملفات الصوت
     if base_filename.lower().endswith((".wav", ".mp3")):
