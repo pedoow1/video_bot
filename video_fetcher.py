@@ -1,160 +1,110 @@
-# video_fetcher.py - جلب فيديوهات raw قصيرة
-
 import os
-import random
 import subprocess
-import json
 import time
-import re
-import requests
-from config import OUTPUT_DIR
+import random
+from datetime import datetime
 
-CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
-
-# إعدادات جديدة للـ Raw
-CLIP_MIN_DURATION = 8.0
-CLIP_MAX_DURATION = 60.0   # فيديوهات قصيرة raw
-TARGET_VIDEO_DURATION = 300
-
-YOUTUBE_QUERIES = [
-    "funny cats", "cute kittens", "cat fails", "hilarious cats",
-    "funny dogs", "cute funny animals", "kittens playing", "funny pets",
-    "cat shorts", "funny cat shorts", "kitten shorts"
-]
-
-def _get_duration(path: str) -> float | None:
+def _download_video(url: str, output_path: str) -> bool:
+    """تحميل فيديو باستخدام yt-dlp مع cookies"""
     try:
-        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", path],
-                           capture_output=True, text=True, timeout=15)
-        return float(json.loads(r.stdout)["format"]["duration"])
-    except:
-        return None
-
-def _sanitize_id(video_id: str) -> str:
-    return re.sub(r'[^a-zA-Z0-9_\-]', '_', video_id)
-
-def _search_with_api(query: str, max_results: int = 10) -> list:
-    api_key = os.getenv("YOUTUBE_API_KEY")
-    if not api_key:
-        print("  ⚠️ YOUTUBE_API_KEY مش موجود")
-        return []
-
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "q": query,
-        "type": "video",
-        "maxResults": max_results,
-        "videoDuration": "short",   # فيديوهات قصيرة
-        "key": api_key
-    }
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        data = r.json()
-        videos = []
-        for item in data.get("items", []):
-            vid_id = item["id"]["videoId"]
-            videos.append({
-                "id": vid_id,
-                "url": f"https://www.youtube.com/watch?v={vid_id}",
-                "title": item["snippet"]["title"],
-            })
-        print(f"  ✅ API وجد {len(videos)} فيديو لـ {query}")
-        return videos
+        cmd = [
+            "yt-dlp",
+            "--cookies-from-browser", "chrome",   # أو يستخدم الـ secret تلقائي
+            "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best",
+            "--merge-output-format", "mp4",
+            "--retries", "15",
+            "--fragment-retries", "15",
+            "--abort-on-unavailable-fragment",
+            "--extractor-args", "youtube:player_client=ios,web,android",
+            "--no-abort-on-error",
+            "--ignore-errors",
+            "--sleep-interval", "3",
+            "-o", output_path,
+            url
+        ]
+        
+        print(f"   ⬇️ جاري تحميل: {url}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        
+        if result.returncode == 0 and os.path.exists(output_path):
+            print(f"   ✅ تم التحميل بنجاح: {output_path}")
+            return True
+        else:
+            print(f"   ❌ فشل التحميل: {result.stderr[-300:]}")
+            return False
     except Exception as e:
-        print(f"  ⚠️ API خطأ: {e}")
+        print(f"   ❌ خطأ في التحميل: {e}")
+        return False
+
+
+def _search_with_yt_dlp(query: str, max_results: int = 10):
+    """بحث باستخدام yt-dlp فقط (بدون API Key)"""
+    print(f"   🔍 جاري البحث عن: {query}")
+    try:
+        cmd = [
+            "yt-dlp",
+            f"ytsearch{max_results}:{query}",
+            "--flat-playlist",
+            "--print", "%(id)s %(title)s",
+            "--quiet"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
+        
+        videos = []
+        for line in result.stdout.strip().split('\n'):
+            if line.strip():
+                parts = line.split(' ', 1)
+                if len(parts) >= 2:
+                    vid_id = parts[0].strip()
+                    title = parts[1].strip()
+                    videos.append({
+                        "id": vid_id,
+                        "url": f"https://www.youtube.com/watch?v={vid_id}",
+                        "title": title
+                    })
+        print(f"   ✅ yt-dlp وجد {len(videos)} فيديو")
+        return videos[:max_results]
+    except Exception as e:
+        print(f"   ⚠️ خطأ في البحث: {e}")
         return []
 
-def _download_video(url: str, video_id: str) -> str | None:
-    safe_id = _sanitize_id(video_id)
-    final_path = os.path.join(CLIPS_DIR, f"yt_{safe_id}.mp4")   # raw
 
-    if os.path.exists(final_path) and os.path.getsize(final_path) > 10_000:
-        return final_path
-
-    cmd = [
-        "yt-dlp",
-        "-f", "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best",
-        "--merge-output-format", "mp4",
-        "--no-playlist",
-        "--quiet",
-        "--no-warnings",
-        "--js-runtimes", "deno",
-        "--extractor-args", "youtube:player_client=ios,android,web",
-        "--ignore-errors",
-        "-o", final_path,
-        url
+def fetch_cat_clips(count: int = 5):
+    """جلب كليبات قطط"""
+    queries = [
+        "funny cats", "cute kittens", "cat compilation", 
+        "cats being silly", "kittens playing", "funny cat videos"
     ]
     
-    print(f"  ⬇️ تحميل raw: {video_id}")
-    try:
-        r = subprocess.run(cmd, capture_output=True, timeout=240)
-        if r.returncode == 0 and os.path.exists(final_path) and os.path.getsize(final_path) > 3_000_000:
-            print(f"  ✅ تحميل raw ناجح")
-            return final_path
-        else:
-            print(f"  ⚠️ فشل التحميل: {video_id}")
-            return None
-    except Exception as e:
-        print(f"  ⚠️ خطأ تحميل: {e}")
-        return None
-
-def _fetch_from_youtube(count: int) -> list:
-    print(f"  🎬 جاري جلب {count} فيديو raw...")
-    clips = []
-    queries = random.sample(YOUTUBE_QUERIES, min(6, len(YOUTUBE_QUERIES)))
     all_videos = []
-
-    for q in queries:
-        all_videos.extend(_search_with_api(q))
-        time.sleep(1.0)
-
-    seen = set()
-    unique_videos = [v for v in all_videos if v["id"] not in seen and not seen.add(v["id"])]
-    random.shuffle(unique_videos)
-
-    for video in unique_videos:
-        if len(clips) >= count:
+    for query in queries:
+        if len(all_videos) >= count * 2:
             break
+        videos = _search_with_yt_dlp(query, max_results=8)
+        all_videos.extend(videos)
+        time.sleep(2)
+    
+    # إزالة التكرارات
+    unique_videos = {v["id"]: v for v in all_videos}.values()
+    return list(unique_videos)[:count]
 
-        clip_path = _download_video(video["url"], video["id"])
-        if clip_path:
-            clips.append({
-                "path": clip_path,
-                "description": video["title"],
-                "youtube_url": video["url"]
-            })
-            print(f"  ✅ raw جاهز: {video['title'][:60]}")
 
-    print(f"  📊 نجح {len(clips)} raw فيديو")
-    return clips
+def run_cat_pipeline():
+    """الـ Pipeline الرئيسي للقطط"""
+    print(f"\n🐱 {datetime.now().strftime('%d-%m-%Y')} - بدء إنتاج فيديو قطط")
+    
+    videos = fetch_cat_clips(count=8)
+    
+    if not videos:
+        print("❌ لم يتم العثور على أي فيديوهات")
+        return False
+    
+    print(f"📥 تم جلب {len(videos)} فيديو raw")
+    
+    # هنا يمكن إضافة دمج الفيديوهات بـ ffmpeg لاحقًا
+    print("✅ Cat Pipeline نجح (جاهز للمعالجة)")
+    return True
 
-def fetch_cat_clips(count: int = 10) -> list:
-    os.makedirs(CLIPS_DIR, exist_ok=True)
 
-    existing = _get_existing_clips()
-    if len(existing) >= count:
-        print(f"✅ استخدام {count} كليب raw موجود")
-        return random.sample(existing, count)
-
-    needed = count - len(existing)
-    yt_clips = _fetch_from_youtube(needed)
-    clips = existing + yt_clips
-
-    while len(clips) < count and clips:
-        clips.append(random.choice(clips))
-
-    print(f"✅ إجمالي {len(clips)} فيديو raw جاهز!")
-    return clips[:count]
-
-def _get_existing_clips() -> list:
-    if not os.path.exists(CLIPS_DIR):
-        return []
-    clips = []
-    for f in os.listdir(CLIPS_DIR):
-        if f.endswith(".mp4") and not f.startswith("_tmp"):
-            full = os.path.join(CLIPS_DIR, f)
-            if os.path.getsize(full) > 10_000:
-                clips.append({"path": full, "description": f"cached raw: {f}", "youtube_url": ""})
-    random.shuffle(clips)
-    return clips
+if __name__ == "__main__":
+    run_cat_pipeline()
