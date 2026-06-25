@@ -501,17 +501,23 @@ def _build_subtitle_clips(subtitle_lines: list, scene_start: float,
             continue
 
         try:
-            # كل frame مختلف عن التاني بس في لون الكلمة المهايلايتة
             cache_key = f"{'_'.join(words)}_{highlight_idx}"
             sub_path  = f"/tmp/sub_{abs(hash(cache_key))}.png"
 
             sub_img = _render_subtitle_image(words, highlight_idx, font_path, font_size)
             sub_img.save(sub_path)
 
+            # نحسب المكان بشكل صح بناءً على حجم الصورة الفعلي
+            # نحط الـ subtitle على بُعد BOTTOM_MARGIN من أسفل الفيديو
+            BOTTOM_MARGIN = 60  # مسافة من أسفل الشاشة بالبيكسل
+            sub_h = sub_img.size[1]
+            y_pos = VIDEO_HEIGHT - sub_h - BOTTOM_MARGIN
+            y_pos = max(0, y_pos)  # مش يطلع فوق حدود الشاشة
+
             sub_clip = (ImageClip(sub_path, ismask=False)
                         .set_start(rel_start)
                         .set_duration(duration)
-                        .set_position(("center", VIDEO_HEIGHT - 170)))
+                        .set_position(("center", y_pos)))
             clips.append(sub_clip)
 
         except Exception as e:
@@ -817,6 +823,160 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
     final_video.close()
 
     print(f"✅ الفيديو جاهز: {output_path}")
+    return output_path
+
+
+# ==============================
+#  فيديو قطط - يستخدم كليبات بدل الصور
+# ==============================
+
+def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
+                     cat_clips: list,
+                     scene_durations: list = None,
+                     word_timings: list = None) -> str:
+    """
+    يبني فيديو قطط مضحكة بـ:
+      - كليبات فيديو حقيقية بدل الصور الثابتة
+      - subtitles بيوصفوا المشهد (مع word timing)
+      - موسيقى خلفية خفيفة happy/funny
+    """
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    output_path = os.path.join(VIDEO_DIR, output_filename)
+
+    paragraphs = story_data["story_paragraphs"]
+    mood       = story_data.get("mood", "happy")
+
+    # ─── 1. الموسيقى ──────────────────────────────────────
+    music_path = fetch_background_music(mood)
+
+    # ─── 2. حساب التوقيت ──────────────────────────────────
+    audio_clip     = AudioFileClip(audio_path)
+    total_duration = audio_clip.duration
+
+    if scene_durations and len(scene_durations) == len(paragraphs):
+        durations = scene_durations
+        print("✅ مدة كل فقرة مقاسة فعلاً")
+    else:
+        eq        = total_duration / len(paragraphs)
+        durations = [eq] * len(paragraphs)
+        print("⚠️ fallback — تقسيم متساوي")
+
+    start_times = []
+    cum = 0.0
+    for d in durations:
+        start_times.append(cum)
+        cum += d
+
+    # ─── 3. Word timings ──────────────────────────────────
+    all_word_timings = word_timings or []
+    if all_word_timings:
+        print(f"💬 word timings جاهزة ({len(all_word_timings)} كلمة)")
+    else:
+        print("  ⚠️ مفيش word timings — subtitles مش هتظهر")
+
+    # ─── 4. بناء مشاهد الكليبات ───────────────────────────
+    print(f"🎬 بناء {len(paragraphs)} مشهد من كليبات قطط...")
+    scene_clips = []
+
+    for i in range(len(paragraphs)):
+        clip_path = cat_clips[i % len(cat_clips)]
+        target_dur = durations[i]
+
+        try:
+            raw_clip = VideoFileClip(clip_path)
+
+            # لو الكليب أقصر من المطلوب — نلف عليه
+            if raw_clip.duration < target_dur:
+                loops = int(target_dur / raw_clip.duration) + 1
+                from moviepy.editor import concatenate_videoclips as _concat
+                raw_clip = _concat([raw_clip] * loops)
+
+            # قص بالمدة المطلوبة
+            clip = raw_clip.subclip(0, target_dur)
+
+            # resize للـ 1920x1080
+            clip = clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+
+            # fade بين المشاهد
+            if i > 0:
+                clip = fadein(clip, 0.4)
+            if i < len(paragraphs) - 1:
+                clip = fadeout(clip, 0.4)
+
+            scene_clips.append(clip)
+            print(f"  ✅ مشهد {i+1} — {os.path.basename(clip_path)} ({target_dur:.1f}s)")
+
+        except Exception as e:
+            print(f"  ⚠️ مشهد {i+1} فشل ({e}) — fallback لصورة")
+            from config import FONT_PATH as _FP
+            fb = _fallback_background("happy", i)
+            clip = _make_motion_clip(fb, target_dur, "zoom_in")
+            scene_clips.append(clip)
+
+    # ─── 5. دمج المشاهد ───────────────────────────────────
+    print("🔗 دمج المشاهد...")
+    base_video = concatenate_videoclips(scene_clips, method="compose")
+
+    # ─── 6. Subtitle clips ────────────────────────────────
+    subtitle_clips = []
+    if all_word_timings:
+        print("💬 بناء subtitle clips...")
+        sub_lines = _group_timings_into_lines(all_word_timings, chunk_size=5)
+        subtitle_clips = _build_subtitle_clips(
+            sub_lines,
+            scene_start=0.0,
+            font_path=FONT_PATH,
+            font_size=FONT_SIZE_STORY
+        )
+        print(f"  ✅ {len(subtitle_clips)} subtitle clips")
+
+    if subtitle_clips:
+        final_video = CompositeVideoClip([base_video] + subtitle_clips,
+                                         size=(VIDEO_WIDTH, VIDEO_HEIGHT))
+    else:
+        final_video = base_video
+
+    # ─── 7. دمج الصوت ─────────────────────────────────────
+    # الكليبات عندها صوت — نخفته ونحط الـ narration فوقيه
+    try:
+        original_audio = base_video.audio
+        if original_audio:
+            original_audio = volumex(original_audio, 0.08)  # 8% — خلفية خفيفة جداً
+            narration = AudioFileClip(audio_path)
+            mixed = CompositeAudioClip([narration, original_audio])
+            if music_path:
+                music = AudioFileClip(music_path)
+                music = audio_loop(music, duration=total_duration) if music.duration < total_duration \
+                        else music.subclip(0, total_duration)
+                music = volumex(music, 0.10)
+                music = music.audio_fadein(2.0).audio_fadeout(2.0)
+                mixed = CompositeAudioClip([narration, original_audio, music])
+            final_video = final_video.set_audio(mixed)
+        else:
+            final_audio = mix_full_audio(AudioFileClip(audio_path), music_path, [], total_duration)
+            final_video = final_video.set_audio(final_audio)
+    except Exception as e:
+        print(f"  ⚠️ خطأ في دمج الصوت: {e} — fallback")
+        final_video = final_video.set_audio(AudioFileClip(audio_path))
+
+    final_video = final_video.set_duration(total_duration)
+
+    # ─── 8. تصدير ─────────────────────────────────────────
+    print(f"💾 تصدير → {output_path}")
+    final_video.write_videofile(
+        output_path,
+        fps=FPS,
+        codec="libx264",
+        audio_codec="aac",
+        bitrate="4000k",
+        threads=4,
+        logger=None
+    )
+
+    audio_clip.close()
+    final_video.close()
+
+    print(f"✅ فيديو القطط جاهز: {output_path}")
     return output_path
 
 
