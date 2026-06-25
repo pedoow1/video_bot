@@ -17,14 +17,10 @@ DL_HEADERS = {
 
 
 def _verify_url(url: str) -> bool:
-    """يتأكد إن الـ URL صورة حقيقية قابلة للتحميل عبر HEAD request."""
     try:
         r = requests.head(url, headers=DL_HEADERS, timeout=10, allow_redirects=True)
-        if r.status_code == 200:
-            ct = r.headers.get("Content-Type", "")
-            if "image" in ct:
-                return True
-        # بعض السيرفرات مش بتسمح HEAD — نجرب GET بـ stream
+        if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
+            return True
         if r.status_code in (403, 405):
             r2 = requests.get(url, headers=DL_HEADERS, timeout=15, stream=True)
             if r2.status_code == 200 and "image" in r2.headers.get("Content-Type", ""):
@@ -36,56 +32,56 @@ def _verify_url(url: str) -> bool:
 
 
 def _ask_gpt_for_urls(scene_descriptions: list, exclude_urls: list = None) -> list:
-    """يطلب من GPT-4o روابط صور مع تعليمات صارمة بالمصادر المسموحة."""
-
     exclude_note = ""
     if exclude_urls:
-        exclude_note = f"\n\nDo NOT use any of these URLs (they failed verification):\n" + "\n".join(exclude_urls)
+        exclude_note = f"\n\nDo NOT use any of these URLs (they failed):\n" + "\n".join(exclude_urls)
 
     scenes_text = "\n\n".join(
         f"[Scene {i+1}]: {desc}" for i, desc in enumerate(scene_descriptions)
     )
 
-    prompt = f"""You are an expert at finding publicly downloadable images for YouTube educational videos.
+    prompt = f"""You are a visual researcher finding real downloadable images for a YouTube video.
 
-For each scene, find ONE image URL that:
-- Is a DIRECT link to an image file (.jpg, .jpeg, .png, .webp) — NOT a webpage
-- Can be downloaded without login, paywall, or authentication
-- Is publicly accessible (returns HTTP 200 with Content-Type: image/*)
-- Is high resolution (at least 800x600)
-- Is NOT from: Wikimedia, Wikipedia Commons, AP Images (newsroom.ap.org), Getty, Shutterstock, Adobe Stock, NPR media, Scientific American CDN, or any paywalled source
+For each scene description below, find ONE image URL that:
+- DIRECTLY and VISUALLY matches the scene content — if the scene is about hibernation, find a photo of hibernating animals or a scientist in a lab, NOT an aerial view of houses
+- Is a DIRECT link to an image file (.jpg, .jpeg, .png, .webp) that returns HTTP 200
+- Is publicly accessible without login or paywall
+- Is at least 800x600 resolution
 
-BEST sources to use:
-- NASA: images.nasa.gov direct image links (e.g. https://www.nasa.gov/wp-content/uploads/...)
-- ESA: www.esa.int direct image links
-- NOAA: direct .jpg/.png from noaa.gov
-- Unsplash: images.unsplash.com/photo-... links
-- Pexels: images.pexels.com/photos/... links
-- Public domain archives: publicdomainpictures.net, picryl.com
-- Any government/educational .gov/.edu site with direct image files{exclude_note}
+CRITICAL MATCHING RULES:
+- Read each scene description carefully and find an image of EXACTLY what is described
+- If the scene mentions a specific animal, person, place, or event — find that exact thing
+- Do NOT pick generic or loosely related images
+- Do NOT pick images just because they share one word with the description
+
+ALLOWED sources (direct image links only):
+- NASA: nasa.gov direct image files
+- ESA: esa.int direct image files  
+- Unsplash: images.unsplash.com/photo-... 
+- Pexels: images.pexels.com/photos/...
+- Wikimedia Commons DIRECT file links: upload.wikimedia.org/wikipedia/commons/...
+- Any .gov or .edu site with direct image files{exclude_note}
 
 Scenes:
 {scenes_text}
 
 Reply with JSON ONLY:
 {{"images": [
-  {{"scene": 1, "url": "https://...", "source": "NASA"}},
-  {{"scene": 2, "url": "https://...", "source": "Unsplash"}},
+  {{"scene": 1, "url": "https://...", "source": "Unsplash"}},
   ...
 ]}}
 
-Exactly {len(scene_descriptions)} items. Direct downloadable image URLs only."""
+Exactly {len(scene_descriptions)} items."""
 
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Content-Type": "application/json"
     }
-
     payload = {
         "model": "gpt-4o",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4000,
-        "temperature": 0.3,
+        "temperature": 0.2,
     }
 
     for attempt in range(3):
@@ -106,7 +102,6 @@ Exactly {len(scene_descriptions)} items. Direct downloadable image URLs only."""
 
 
 def _pollinations_fallback(description: str, img_path: str) -> bool:
-    """يولد صورة عبر Pollinations AI كـ fallback."""
     encoded = urllib.parse.quote(description[:200])
     url = f"https://image.pollinations.ai/prompt/{encoded}?width=1280&height=720&nologo=true&model=flux"
     for attempt in range(3):
@@ -126,13 +121,8 @@ def _pollinations_fallback(description: str, img_path: str) -> bool:
 
 
 def download_scene_images(urls_data: list, scene_descriptions: list) -> list:
-    """
-    يحمل الصور — لو URL فشل يطلب بديل من GPT، لو فشل كمان يعمل Pollinations.
-    urls_data: list of {"scene": N, "url": "...", "source": "..."}
-    """
     os.makedirs(IMAGES_DIR, exist_ok=True)
     paths = []
-    failed_urls = []
 
     for i, (img_data, desc) in enumerate(zip(urls_data, scene_descriptions)):
         url = img_data.get("url", "")
@@ -145,11 +135,10 @@ def download_scene_images(urls_data: list, scene_descriptions: list) -> list:
             paths.append(img_path)
             continue
 
-        # تحميل الـ URL اللي جابه GPT
         downloaded = False
 
         if not url or not url.startswith("http"):
-            print(f"  ⚠️ مشهد {i+1}: URL فاضي أو غلط — Pollinations مباشرة")
+            print(f"  ⚠️ مشهد {i+1}: URL فاضي — Pollinations")
         else:
             print(f"  ⬇️ مشهد {i+1} [{source}]: بيتحمل...")
             try:
@@ -166,27 +155,20 @@ def download_scene_images(urls_data: list, scene_descriptions: list) -> list:
                 print(f"  ❌ مشهد {i+1}: خطأ — {e}")
 
         if not downloaded:
-            # Pollinations fallback مباشرة
             success = _pollinations_fallback(desc, img_path)
-            if success:
-                paths.append(img_path)
-            else:
-                print(f"  ⚠️ مشهد {i+1}: مفيش صورة — fallback")
-                paths.append(None)
+            paths.append(img_path if success else None)
 
     return paths
 
 
 def fetch_image_urls_with_gpt(scene_descriptions: list) -> list:
-    """يطلب URLs من GPT-4o ويتحقق منها قبل الاستخدام."""
     print(f"🔍 GPT-4o بيدور على {len(scene_descriptions)} صورة...")
     images = _ask_gpt_for_urls(scene_descriptions)
 
     if not images:
-        print("⚠️ GPT-4o فشل — هيستخدم Pollinations للكل")
+        print("⚠️ GPT-4o فشل — Pollinations للكل")
         return [{"scene": i+1, "url": "", "source": "pollinations"} for i in range(len(scene_descriptions))]
 
-    # verify كل URL
     print("🔎 بيتحقق من الـ URLs...")
     failed = []
     for img in images:
@@ -194,29 +176,25 @@ def fetch_image_urls_with_gpt(scene_descriptions: list) -> list:
         if url and _verify_url(url):
             print(f"  ✅ مشهد {img['scene']}: {img['source']} — OK")
         else:
-            print(f"  ❌ مشهد {img['scene']}: {url[:60]} — فشل التحقق")
+            print(f"  ❌ مشهد {img['scene']}: فشل التحقق")
             failed.append(img)
-            img["url"] = ""  # هيتعامل معاه كـ fallback في download
+            img["url"] = ""
 
     if failed:
-        print(f"⚠️ {len(failed)} URL فشلوا — بيطلب بدائل من GPT...")
+        print(f"⚠️ {len(failed)} فشلوا — بيطلب بدائل...")
         failed_scenes = [scene_descriptions[f["scene"]-1] for f in failed]
-        failed_urls_list = [f.get("url", "") for f in failed if f.get("url")]
-        replacements = _ask_gpt_for_urls(failed_scenes, exclude_urls=failed_urls_list)
+        failed_urls = [f.get("url", "") for f in failed if f.get("url")]
+        replacements = _ask_gpt_for_urls(failed_scenes, exclude_urls=failed_urls)
         if replacements:
             for orig, rep in zip(failed, replacements):
                 if _verify_url(rep.get("url", "")):
                     orig["url"] = rep["url"]
                     orig["source"] = rep["source"]
-                    print(f"  ✅ مشهد {orig['scene']}: بديل OK — {rep['source']}")
-                else:
-                    print(f"  ❌ مشهد {orig['scene']}: البديل كمان فشل — Pollinations")
+                    print(f"  ✅ مشهد {orig['scene']}: بديل OK")
 
     return images
 
 
 def get_scene_images(scene_descriptions: list) -> list:
-    """الدالة الرئيسية — تجيب وصف المشاهد وترجع paths للصور المحملة."""
     urls_data = fetch_image_urls_with_gpt(scene_descriptions)
-    paths = download_scene_images(urls_data, scene_descriptions)
-    return paths
+    return download_scene_images(urls_data, scene_descriptions)
