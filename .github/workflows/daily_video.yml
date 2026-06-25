@@ -26,6 +26,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install "curl_cffi>=0.10,<0.15"
 
       - name: 🔤 Download Arabic font
         run: |
