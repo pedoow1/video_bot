@@ -36,12 +36,25 @@ def _ensure_ytdlp():
         print("📦 تثبيت yt-dlp...")
         subprocess.run(["pip", "install", "yt-dlp", "-q", "--break-system-packages"], check=True)
 
+    # curl_cffi مطلوب لـ --impersonate (تجاوز Cloudflare بدون cookies)
+    try:
+        import curl_cffi  # noqa
+    except ImportError:
+        print("📦 تثبيت curl_cffi (مطلوب لـ Rumble)...")
+        subprocess.run(
+            ["pip", "install", "curl_cffi>=0.10,<0.15", "-q", "--break-system-packages"],
+            check=True
+        )
+
 
 def _search_rumble(query: str, limit: int = 15) -> list:
     """يبحث على Rumble عبر yt-dlp مباشرة."""
-    search_url = f"rumble:{query}"
     print(f"  🔍 Rumble: {query}")
     try:
+        # rumble:QUERY هو الطريقة الصح مع yt-dlp للبحث على Rumble
+        # --impersonate chrome:android بيخلي yt-dlp يتصرف كموبايل Chrome
+        # وبيعمل TLS fingerprint حقيقي يتجاوز Cloudflare بدون cookies
+        search_url = f"rumble:{query}"
         cmd = [
             "yt-dlp",
             "--flat-playlist",
@@ -49,7 +62,8 @@ def _search_rumble(query: str, limit: int = 15) -> list:
             "--dump-json",
             "--no-warnings",
             "--quiet",
-            f"https://rumble.com/search/video?q={query.replace(' ', '+')}",
+            "--impersonate", "chrome:android",
+            search_url,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
@@ -87,11 +101,12 @@ def _download_clip(video_url: str, post_id: str, target_duration: float, out_pat
     """يحمّل فيديو من Rumble ويقطع منه مقطع بالمدة المطلوبة (max 15s)."""
     tmp = os.path.join(CLIPS_DIR, f"_tmp_{post_id}.mp4")
     try:
-        # تحميل بـ yt-dlp
+        # تحميل بـ yt-dlp مع impersonate لتجاوز Cloudflare
         cmd_dl = [
             "yt-dlp",
             "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
             "--merge-output-format", "mp4",
+            "--impersonate", "chrome:android",
             "-o", tmp,
             "--no-warnings",
             "--quiet",
@@ -101,7 +116,8 @@ def _download_clip(video_url: str, post_id: str, target_duration: float, out_pat
         if r.returncode != 0 or not os.path.exists(tmp):
             # fallback بدون format selector
             subprocess.run(
-                ["yt-dlp", "-f", "best", "-o", tmp, "--no-warnings", "--quiet", video_url],
+                ["yt-dlp", "-f", "best", "--impersonate", "chrome:android",
+                 "-o", tmp, "--no-warnings", "--quiet", video_url],
                 capture_output=True, timeout=90
             )
 
