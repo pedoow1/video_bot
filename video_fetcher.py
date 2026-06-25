@@ -17,16 +17,18 @@ CLIP_MAX_DURATION = 9.0
 
 # كلمات البحث على يوتيوب - Creative Commons فقط
 SEARCH_QUERIES = [
-    "funny cats compilation creative commons",
-    "cute cats funny moments creative commons",
-    "cats being silly creative commons",
-    "funny kittens creative commons",
-    "cats fail compilation creative commons",
-    "cats vs cucumbers creative commons",
-    "cats jumping failing creative commons",
-    "cute funny cats 2024 creative commons",
-    "cats playing funny creative commons",
-    "hilarious cat moments creative commons",
+    "funny cats compilation",
+    "cute cats funny moments",
+    "cats being silly",
+    "funny kittens",
+    "cats fail compilation",
+    "cats vs cucumbers funny",
+    "cats jumping failing",
+    "cute funny cats",
+    "cats playing funny",
+    "hilarious cat moments",
+    "cat doing funny things",
+    "cats scared funny",
 ]
 
 
@@ -55,7 +57,6 @@ def _search_youtube_cc(query: str, max_results: int = 10) -> list:
             f"ytsearch{max_results}:{query}",
             "--dump-json",
             "--no-download",
-            "--match-filter", "license='Creative Commons Attribution license (reuse allowed)'",
             "--quiet",
             "--no-warnings",
         ]
@@ -69,19 +70,30 @@ def _search_youtube_cc(query: str, max_results: int = 10) -> list:
             try:
                 info = json.loads(line)
                 duration = info.get("duration", 0) or 0
-                # نجيب فيديوهات من 30 ثانية لـ 15 دقيقة
+                license_info = info.get("license") or ""
+
+                # نقبل فيديو لو:
+                # 1. license فيها "Creative Commons" صراحةً
+                # 2. أو مفيش license ونثق في الـ query إن النتائج مناسبة
+                is_cc = "creative commons" in license_info.lower()
+
                 if 30 <= duration <= 900:
                     videos.append({
                         "url":      info.get("webpage_url") or info.get("url"),
                         "title":    info.get("title", ""),
                         "duration": duration,
                         "id":       info.get("id", ""),
+                        "is_cc":    is_cc,
                     })
             except json.JSONDecodeError:
                 continue
 
-        print(f"  ✅ لقى {len(videos)} فيديو Creative Commons")
-        return videos
+        # نفضل CC أولاً، لو مفيش ناخد أي نتيجة
+        cc_videos = [v for v in videos if v["is_cc"]]
+        final = cc_videos if cc_videos else videos
+
+        print(f"  ✅ لقى {len(final)} فيديو (CC: {len(cc_videos)}, total: {len(videos)})")
+        return final
 
     except subprocess.TimeoutExpired:
         print("  ⚠️ البحث استغرق وقت طويل — تخطي")
