@@ -95,13 +95,13 @@ def run_cat_pipeline(topic: str = None):
     try:
         # ─── الخطوة 1: جلب الكليبات أولاً عشان نعرف الـ descriptions ──
         SCENE_COUNT = 10
-        print(f"🐱 [1/4] جلب {SCENE_COUNT} كليبات حيوانات من Pexels أولاً...")
+        print(f"🎥 [1/4] جلب {SCENE_COUNT} كليبات حيوانات من YouTube أولاً...")
         cat_clips_data = fetch_cat_clips(count=SCENE_COUNT)
 
         if not cat_clips_data:
             raise RuntimeError(
                 "❌ Cat Pipeline: مفيش كليبات — "
-                "Pexels رجع 0 فيديو. تأكد من PEXELS_API_KEY."
+                "YouTube رجع 0 فيديو. تأكد من اتصال الإنترنت وإن yt-dlp مثبت."
             )
 
         # ─── الخطوة 2: توليد الإنترو والخاتمة فقط ──────────
