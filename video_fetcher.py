@@ -2,10 +2,12 @@
 # يستخدم yt-dlp للبحث والتحميل، وffmpeg لتقطيع المقاطع
 
 import os
+import re
 import random
 import subprocess
 import json
 import time
+import requests
 from pathlib import Path
 from config import OUTPUT_DIR
 
@@ -52,7 +54,6 @@ def _search_youtube_api(query: str, max_results: int = 10) -> list:
         resp.raise_for_status()
 
         # استخراج video IDs من الـ HTML
-        import re
         video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
         # إزالة التكرار مع الحفاظ على الترتيب
         seen = set()
