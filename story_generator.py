@@ -228,21 +228,21 @@ Exactly {len(paragraphs)} items."""
 
 def generate_funny_animals_script(topic: str = None, clip_descriptions: list = None) -> dict:
     """
-    يولد سكريبت لفيديو حيوانات مضحكة:
+    يولد سكريبت لفيديو فشل ومواقف مضحكة (people fails / bloopers):
     - فقرة واحدة في الأول: تحية + تقديم
     - فقرة واحدة في الآخر: outro + اشتراك
     - النص في الوسط: صفر (الفيديو بيتكلم بالصورة)
     """
-    chosen_topic = topic or "funny animals doing silly things"
+    chosen_topic = topic or "people failing and embarrassing moments"
 
-    prompt = f"""You are a warm, energetic YouTube narrator for a funny animals compilation channel.
+    prompt = f"""You are a warm, energetic YouTube narrator for a "people failing / bloopers" compilation channel.
 
-Write EXACTLY 2 short spoken lines for a funny animals video about: "{chosen_topic}"
+Write EXACTLY 2 short spoken lines for a funny fails/bloopers video about: "{chosen_topic}"
 
 Line 1 — INTRO (spoken at the very start of the video):
 - Greet the audience warmly: "Hey guys!", "What's up everyone!", etc.
 - Say something like "welcome back" or "glad you're here"
-- Tease what they're about to see (funny animals, chaos, cuteness)
+- Tease what they're about to see (funny fails, bloopers, embarrassing moments, chaos)
 - Keep it SHORT: 2-3 sentences MAX
 
 Line 2 — OUTRO (spoken at the very end of the video):
@@ -259,14 +259,14 @@ Rules:
 
 Reply with JSON ONLY:
 {{
-  "title": "catchy funny animals title under 60 chars, NO duration mentioned",
-  "description": "YouTube description 50-70 words, funny tone, about the animals compilation, ends with CTA to subscribe. NO mention of duration or minutes.",
-  "tags": ["funnyanimals", "animals", "cute", "compilation", "funnypets", "animalsbeingidiots", "funny", "lol"],
+  "title": "catchy funny fails/bloopers title under 60 chars, NO duration mentioned",
+  "description": "YouTube description 50-70 words, funny tone, about the fails/bloopers compilation, ends with CTA to subscribe. NO mention of duration or minutes.",
+  "tags": ["fails", "bloopers", "funnyfails", "compilation", "epicfail", "fail", "funny", "lol"],
   "story_paragraphs": [
     "intro line here...",
     "outro line here..."
   ],
-  "bg_keyword": "animals",
+  "bg_keyword": "fails",
   "mood": "happy"
 }}
 
@@ -284,7 +284,7 @@ CRITICAL: story_paragraphs must contain EXACTLY 2 items. NO mention of duration 
         "response_format": {"type": "json_object"},
     }
 
-    print(f"📝 جاري توليد سكريبت حيوانات مضحكة: {chosen_topic}")
+    print(f"📝 جاري توليد سكريبت فشل/مواقف مضحكة: {chosen_topic}")
 
     try:
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
@@ -294,9 +294,9 @@ CRITICAL: story_paragraphs must contain EXACTLY 2 items. NO mention of duration 
         data = json.loads(raw)
 
         data["full_story"] = " ".join(data.get("story_paragraphs", []))
-        data.setdefault("bg_keyword", "animals")
+        data.setdefault("bg_keyword", "fails")
         data.setdefault("mood", "happy")
-        data.setdefault("tags", ["funnyanimals", "animals", "compilation", "funny"])
+        data.setdefault("tags", ["fails", "bloopers", "compilation", "funny"])
 
         # إزالة أي ذكر للمدة من العنوان والوصف
         for field in ["title", "description"]:
@@ -318,7 +318,7 @@ CRITICAL: story_paragraphs must contain EXACTLY 2 items. NO mention of duration 
         return data
 
     except Exception as e:
-        print(f"❌ خطأ في توليد سكريبت الحيوانات: {e}")
+        print(f"❌ خطأ في توليد سكريبت الفشل: {e}")
         raise
 
 
@@ -332,4 +332,3 @@ if __name__ == "__main__":
     print(f"\nالعنوان: {story['title']}")
     print(f"الموود: {story['mood']}")
     print(f"\nأول حقيقة:\n{story['story_paragraphs'][0]}")
-
