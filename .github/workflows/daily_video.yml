@@ -1,55 +1,54 @@
-name: 🎬 Daily Video Bot
+name: 🎬 Video Bot - Daily Upload
 
 on:
   schedule:
-    - cron: '0 17 * * *'      # كل يوم الساعة 5 مساءً
-  workflow_dispatch:          # عشان تشغله يدوياً
-
-concurrency:
-  group: \( {{ github.workflow }}- \){{ github.ref }}
-  cancel-in-progress: true
+    - cron: '0 16 * * *'
+  workflow_dispatch:
 
 jobs:
-  video-bot:
+  make-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: 📥 Checkout repo
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python
+      - name: 🐍 Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 🔄 Update yt-dlp to Latest Version
-        run: |
-          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-          sudo chmod a+rx /usr/local/bin/yt-dlp
-          yt-dlp --version
+      - name: 🎞️ Install FFmpeg
+        run: sudo apt-get install -y ffmpeg
 
-      - name: 🎥 Install FFmpeg
+      - name: 📦 Install Python packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: 🔑 Load YouTube Cookies (اختياري)
-        uses: AnimMouse/setup-yt-dlp/cookies@v3
-        with:
-          cookies: ${{ secrets.YOUTUBE_COOKIES }}
-
-      - name: 📦 Install Python Requirements
-        run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
+          pip install "curl_cffi>=0.10,<0.15"
 
-      - name: 🚀 Run Video Fetcher & Uploader
-        env:
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          # YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}   # لو كنت مستخدمه
-        run: python main.py --now --cats
-
-      - name: 🧹 Cleanup
-        if: always()
+      - name: 🔤 Download Arabic font
         run: |
-          rm -rf clips/ *.mp4 *.wav *.jpg 2>/dev/null || true
+          mkdir -p assets/fonts
+          curl -L "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" \
+               -o assets/fonts/arabic.ttf
+
+      - name: 📁 Create output dirs
+        run: mkdir -p output/audio output/videos output/images output/music output/sfx output/cat_clips
+
+      - name: 🚀 Run Video Bot
+        env:
+          MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
+          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
+          YOUTUBE_TOKEN:     ${{ secrets.YOUTUBE_TOKEN }}
+          GH_TOKEN:          ${{ secrets.GH_TOKEN }}
+        run: python main.py --cats
+
+      - name: 📋 Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-log
+          path: output/videos_log.txt
+          if-no-files-found: ignore
