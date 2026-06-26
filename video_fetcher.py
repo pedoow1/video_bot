@@ -13,6 +13,10 @@ CLIP_MIN_DURATION  = 4.0
 CLIP_MAX_DURATION  = 25.0
 TARGET_VIDEO_DURATION = 300
 
+# نتجاهل أول وآخر فترة من كل فيديو مصدر (إنترو/أوترو/لوجو غالباً)
+SKIP_START_SECONDS = 10.0
+SKIP_END_SECONDS   = 10.0
+
 IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
 IA_DOWNLOAD_BASE = "https://archive.org/download"
 IA_METADATA_BASE = "https://archive.org/metadata"
@@ -90,9 +94,10 @@ def _save_used_id(identifier: str, last_pos: float, completed: bool = False):
 def _get_next_start(identifier: str, vid_dur: float, clip_duration: float) -> float | None:
     """
     يحسب نقطة البداية التالية للفيديو.
+    - بيتجاهل أول SKIP_START_SECONDS وآخر SKIP_END_SECONDS من الفيديو
     - لو الفيديو اتكمل → يرجع None (تجاهله)
     - لو فيه last_pos → يكمل منها
-    - لو جديد → يبدأ من الأول
+    - لو جديد → يبدأ بعد فترة التجاهل في الأول
     """
     used = _load_used_ids()
 
@@ -104,10 +109,19 @@ def _get_next_start(identifier: str, vid_dur: float, clip_duration: float) -> fl
     else:
         last_pos = 0
 
-    next_start = last_pos
+    # أول مرة (last_pos == 0) لازم نتجاوز أول SKIP_START_SECONDS
+    next_start = max(last_pos, SKIP_START_SECONDS)
 
-    # لو مفيش وقت كافي للكليب التالي
-    if next_start + clip_duration > vid_dur:
+    # أقصى نقطة مسموح نوصلها هي قبل آخر SKIP_END_SECONDS من الفيديو
+    usable_end = vid_dur - SKIP_END_SECONDS
+
+    # الفيديو قصير جداً ومفيش جزء صالح بين بداية وآخر التجاهل
+    if usable_end <= SKIP_START_SECONDS:
+        _save_used_id(identifier, vid_dur, completed=True)
+        return None
+
+    # لو مفيش وقت كافي للكليب التالي قبل ما نوصل لآخر الجزء الصالح
+    if next_start + clip_duration > usable_end:
         _save_used_id(identifier, vid_dur, completed=True)
         return None
 
@@ -149,9 +163,11 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
     if not vid_dur or vid_dur < CLIP_MIN_DURATION:
         return False
 
-    cut_dur   = min(target_duration, vid_dur, CLIP_MAX_DURATION)
-    max_start = max(0.0, vid_dur - cut_dur)
-    start     = random.uniform(0, max_start) if max_start > 0 else 0.0
+    usable_end = vid_dur - SKIP_END_SECONDS
+    cut_dur    = min(target_duration, vid_dur, CLIP_MAX_DURATION)
+    min_start  = SKIP_START_SECONDS
+    max_start  = max(min_start, usable_end - cut_dur)
+    start      = random.uniform(min_start, max_start) if max_start > min_start else min_start
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
@@ -333,7 +349,7 @@ def _download_clip(url: str, identifier: str, title: str, clip_duration: float) 
     if not vid_dur:
         vid_dur = 600  # افتراضي لو مش عارف
 
-    # جيب نقطة البداية الصحيحة
+    # جيب نقطة البداية الصحيحة (بعيد عن أول وآخر SKIP_*_SECONDS)
     start = _get_next_start(identifier, vid_dur, clip_duration)
     if start is None:
         print(f"  ⏭️ {identifier[:40]} اتكمل، تخطي")
@@ -370,7 +386,8 @@ def _download_clip(url: str, identifier: str, title: str, clip_duration: float) 
 
         if r.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             next_pos  = start + clip_duration
-            completed = (next_pos + clip_duration) > vid_dur
+            # الفيديو يعتبر مكتمل لو القطعة الجاية هتدخل في منطقة آخر SKIP_END_SECONDS
+            completed = (next_pos + clip_duration) > (vid_dur - SKIP_END_SECONDS)
             _save_used_id(identifier, next_pos, completed=completed)
             print(f"  ✅ جاهز @ {start:.1f}s→{next_pos:.1f}s {'(مكتمل)' if completed else ''}")
             return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
