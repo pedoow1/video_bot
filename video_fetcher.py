@@ -19,18 +19,21 @@ IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
 IA_DOWNLOAD_BASE = "https://archive.org/download"
 IA_METADATA_BASE = "https://archive.org/metadata"
 
-# نبحث مباشرة جوه collections معروفة بفيديوهات حيوانات مضحكة
-# FailArmy-Archive فيه بالظبط اللي إحنا محتاجينه
+# FailArmy-Archive — item واحد كبير فيه كل فيديوهات FailArmy
+FAILARMY_IDENTIFIER = "FailArmy-Archive"
+
+# كلمات في اسم الملف تدل على إنه حيوانات
+ANIMAL_FILENAME_WORDS = [
+    "animal", "cat", "dog", "pet", "bird", "wildlife",
+    "kitten", "puppy", "goat", "duck", "monkey",
+]
+
+# fallback queries لو FailArmy مش كافي
 IA_QUERIES = [
-    'collection:FailArmy-Archive AND title:(animal) AND mediatype:movies',
-    'collection:FailArmy-Archive AND title:(cat) AND mediatype:movies',
-    'collection:FailArmy-Archive AND title:(dog) AND mediatype:movies',
-    'collection:FailArmy-Archive AND title:(pet) AND mediatype:movies',
-    'collection:FailArmy-Archive AND title:(funny) AND mediatype:movies',
-    # fallback - بحث عام لو الـ collection مش كافي
     'title:(funny cats fails) AND mediatype:movies',
     'title:(funny dogs fails) AND mediatype:movies',
     'title:(animal fails compilation) AND mediatype:movies',
+    'title:(funny animals) AND mediatype:movies',
 ]
 
 # استبعاد — لو أي كلمة دي موجودة في العنوان → تجاهل
@@ -183,6 +186,70 @@ def _search_ia(query: str, rows: int = 30) -> list:
 
 
 # ──────────────────────────────────────────
+# جلب فيديوهات من FailArmy-Archive مباشرة
+# ──────────────────────────────────────────
+
+def _get_failarmy_clips(used_ids: set, count: int) -> list:
+    """بيجيب قائمة فيديوهات من FailArmy-Archive مباشرة من الـ metadata"""
+    try:
+        print(f"  🎬 بيجيب قائمة FailArmy-Archive...")
+        r = requests.get(f"{IA_METADATA_BASE}/{FAILARMY_IDENTIFIER}", timeout=30)
+        if r.status_code != 200:
+            print(f"  ⚠️ FailArmy metadata فشل: {r.status_code}")
+            return []
+
+        files = r.json().get("files", [])
+        candidates = []
+        for f in files:
+            name = f.get("name", "")
+            fmt  = f.get("format", "").lower()
+            size = int(f.get("size", 0) or 0)
+
+            if not (name.lower().endswith(".mp4") or "mpeg4" in fmt):
+                continue
+            if size < 5_000_000:  # أقل من 5MB → مش فيديو حقيقي
+                continue
+            if name.startswith("_"):
+                continue
+
+            name_lower = name.lower()
+
+            # استبعاد الـ blacklist
+            if any(bw in name_lower for bw in BLACKLIST_WORDS):
+                continue
+
+            # نفضل الفيديوهات اللي فيها حيوانات في الاسم
+            has_animal = any(aw in name_lower for aw in ANIMAL_FILENAME_WORDS)
+
+            # استبعاد اللي اتاستخدموا
+            file_id = f"{FAILARMY_IDENTIFIER}/{name}"
+            if file_id in used_ids:
+                continue
+
+            candidates.append({
+                "identifier": file_id,
+                "title":      name.replace(".mp4", "").replace(".", " "),
+                "url":        f"{IA_DOWNLOAD_BASE}/{FAILARMY_IDENTIFIER}/{requests.utils.quote(name)}",
+                "size":       size,
+                "has_animal": has_animal,
+            })
+
+        # نفضل الفيديوهات اللي فيها حيوانات، وبعدين عشوائي
+        animal_clips = [c for c in candidates if c["has_animal"]]
+        other_clips  = [c for c in candidates if not c["has_animal"]]
+        random.shuffle(animal_clips)
+        random.shuffle(other_clips)
+
+        result = (animal_clips + other_clips)[:count * 3]  # نجيب أكتر عشان لو في حاجة فشلت
+        print(f"  ✅ {len(result)} ملف من FailArmy ({len(animal_clips)} حيوانات)")
+        return result
+
+    except Exception as e:
+        print(f"  ⚠️ FailArmy خطأ: {e}")
+        return []
+
+
+# ──────────────────────────────────────────
 # جلب ملفات الفيديو من item
 # ──────────────────────────────────────────
 
@@ -289,45 +356,47 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         print(f"✅ كاش جاهز ({count} كليب)")
         return random.sample(existing, count)
 
-    clips  = list(existing)
-    needed = count - len(clips)
+    clips   = list(existing)
+    used_ids = _load_used_ids()
 
-    print(f"\n🔍 بيبحث في IA عن فيديوهات مضحكة...")
-    all_items = []
-    queries   = random.sample(IA_QUERIES, min(6, len(IA_QUERIES)))
+    # ── أولاً: FailArmy-Archive مباشرة ──
+    print(f"\n🎬 بيجيب من FailArmy-Archive...")
+    failarmy_items = _get_failarmy_clips(used_ids, count - len(clips))
 
-    for q in queries:
-        results = _search_ia(q, rows=30)
-        print(f"  ✅ '{q[:60]}' → {len(results)} نتيجة")
-        all_items.extend(results)
-        time.sleep(0.3)
-
-    # إزالة تكرار + ترتيب
-    seen   = set()
-    unique = []
-    for it in all_items:
-        if it["identifier"] not in seen:
-            seen.add(it["identifier"])
-            unique.append(it)
-    unique.sort(key=lambda x: x["downloads"], reverse=True)
-
-    print(f"\n📋 {len(unique)} فيديو بعد الفلتر — جاري التحميل...")
-
-    for item in unique:
+    for item in failarmy_items:
         if len(clips) >= count:
             break
-
-        identifier = item["identifier"]
-        title      = item["title"]
-
-        mp4_files = _get_mp4_files(identifier)
-        if not mp4_files:
-            print(f"  ⚠️ مفيش mp4 في {identifier}")
-            continue
-
-        result = _download_clip(mp4_files[0]["url"], identifier, title, clip_duration)
+        result = _download_clip(item["url"], item["identifier"], item["title"], clip_duration)
         if result:
             clips.append(result)
+
+    # ── fallback: بحث عام في IA ──
+    if len(clips) < count:
+        print(f"\n🔍 fallback — بيبحث في IA...")
+        all_items = []
+        for q in random.sample(IA_QUERIES, min(4, len(IA_QUERIES))):
+            results = _search_ia(q, rows=30)
+            print(f"  ✅ '{q[:60]}' → {len(results)} نتيجة")
+            all_items.extend(results)
+            time.sleep(0.3)
+
+        seen = set()
+        unique = []
+        for it in all_items:
+            if it["identifier"] not in seen and it["identifier"] not in used_ids:
+                seen.add(it["identifier"])
+                unique.append(it)
+        random.shuffle(unique)
+
+        for item in unique:
+            if len(clips) >= count:
+                break
+            mp4_files = _get_mp4_files(item["identifier"])
+            if not mp4_files:
+                continue
+            result = _download_clip(mp4_files[0]["url"], item["identifier"], item["title"], clip_duration)
+            if result:
+                clips.append(result)
 
     if 0 < len(clips) < count:
         while len(clips) < count:
