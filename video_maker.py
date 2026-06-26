@@ -818,124 +818,162 @@ def create_video(story_data: dict, audio_path: str, output_filename: str,
 def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
                      cat_clips: list,
                      scene_durations: list = None,
-                     word_timings: list = None) -> str:
+                     word_timings: list = None,
+                     target_duration: float = 300.0) -> str:
     """
-    يبني فيديو قطط مضحكة بـ:
-      - كليبات فيديو حقيقية بدل الصور الثابتة
-      - subtitles بيوصفوا المشهد (مع word timing)
-      - موسيقى خلفية خفيفة happy/funny
+    يبني فيديو حيوانات مضحكة بـ:
+      - intro مسموع في أول 10-15 ثانية (على أول كليب)
+      - كليبات في المنتصف بصوت الفيديو الأصلي فقط (بدون تعليق)
+      - outro مسموع في آخر 10-15 ثانية (على آخر كليب)
+      - الكل بيتجمع بالظبط في target_duration (افتراضي 300 ثانية = 5 دقايق)
     """
+    import math
     os.makedirs(VIDEO_DIR, exist_ok=True)
     output_path = os.path.join(VIDEO_DIR, output_filename)
 
-    paragraphs = story_data["story_paragraphs"]
+    paragraphs = story_data["story_paragraphs"]  # [intro_text, outro_text]
     mood       = story_data.get("mood", "happy")
+
+    if not cat_clips:
+        raise ValueError("❌ Cat Pipeline: مفيش كليبات — تأكد إن Internet Archive fetcher شغال.")
 
     # ─── 1. الموسيقى ──────────────────────────────────────
     music_path = fetch_background_music(mood)
 
-    # ─── 2. حساب التوقيت ──────────────────────────────────
-    audio_clip     = AudioFileClip(audio_path)
-    total_duration = audio_clip.duration
+    # ─── 2. مدة الـ narration (intro + outro) ─────────────
+    narration_clip = AudioFileClip(audio_path)
+    narration_dur  = narration_clip.duration
 
-    if scene_durations and len(scene_durations) == len(paragraphs):
-        durations = scene_durations
-        print("✅ مدة كل فقرة مقاسة فعلاً")
+    # مدة الـ intro = الفقرة الأولى، الـ outro = الفقرة التانية
+    if scene_durations and len(scene_durations) >= 2:
+        intro_dur = scene_durations[0]
+        outro_dur = scene_durations[1]
     else:
-        eq        = total_duration / len(paragraphs)
-        durations = [eq] * len(paragraphs)
-        print("⚠️ fallback — تقسيم متساوي")
+        intro_dur = narration_dur * 0.5
+        outro_dur = narration_dur * 0.5
 
-    start_times = []
-    cum = 0.0
-    for d in durations:
-        start_times.append(cum)
-        cum += d
+    middle_dur = max(target_duration - intro_dur - outro_dur, 10.0)
+    print(f"⏱️ intro={intro_dur:.1f}s | middle={middle_dur:.1f}s | outro={outro_dur:.1f}s | total={target_duration:.0f}s")
 
-    # ─── 3. Word timings ──────────────────────────────────
-    all_word_timings = word_timings or []
-    if all_word_timings:
-        print(f"💬 word timings جاهزة ({len(all_word_timings)} كلمة)")
-    else:
-        print("  ⚠️ مفيش word timings — subtitles مش هتظهر")
+    # ─── 3. بناء كليبات الـ middle ────────────────────────
+    print(f"🎬 بناء الـ middle من {len(cat_clips)} كليب...")
 
-    # ─── 4. بناء مشاهد الكليبات ───────────────────────────
-    print(f"🎬 بناء {len(paragraphs)} مشهد من كليبات قطط...")
-    scene_clips = []
+    def _load_clip(path, target_dur):
+        if not os.path.exists(path) or os.path.getsize(path) < 10_000:
+            return None
+        raw = VideoFileClip(path)
+        if raw.duration < 1.0:
+            return None
+        if raw.duration < target_dur:
+            loops = math.ceil(target_dur / raw.duration)
+            from moviepy.editor import concatenate_videoclips as _cc
+            raw = _cc([raw] * loops)
+        clip = raw.subclip(0, min(target_dur, raw.duration))
+        return clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
 
-    if not cat_clips:
-        raise ValueError("❌ Cat Pipeline: مفيش كليبات قطط — مينفعش نبني الفيديو. تأكد إن Rumble fetcher شغال وبيرجع فيديوهات.")
+    # حساب مدة كل كليب middle
+    n_clips      = len(cat_clips)
+    per_clip_dur = middle_dur / n_clips
 
-    for i in range(len(paragraphs)):
-        clip_path = cat_clips[i % len(cat_clips)]
-        target_dur = durations[i]
-
-        # تحقق إن الملف موجود فعلاً قبل ما نفتحه
-        if not os.path.exists(clip_path):
-            raise FileNotFoundError(f"❌ كليب مش موجود: {clip_path}")
-        if os.path.getsize(clip_path) < 10_000:
-            raise ValueError(f"❌ كليب صغير جداً (تالف؟): {clip_path} ({os.path.getsize(clip_path)} bytes)")
-
-        print(f"  📂 مشهد {i+1} — {os.path.basename(clip_path)} ({os.path.getsize(clip_path)//1024} KB)")
-
-        raw_clip = VideoFileClip(clip_path)
-
-        # لو الكليب أقصر من المطلوب — نلف عليه
-        if raw_clip.duration < target_dur:
-            loops = int(target_dur / raw_clip.duration) + 1
-            from moviepy.editor import concatenate_videoclips as _concat
-            raw_clip = _concat([raw_clip] * loops)
-
-        # قص بالمدة المطلوبة
-        clip = raw_clip.subclip(0, target_dur)
-
-        # resize للـ 1920x1080
-        clip = clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
-
-        # fade بين المشاهد
+    middle_clips = []
+    accumulated  = 0.0
+    for i, cp in enumerate(cat_clips):
+        remaining = middle_dur - accumulated
+        if remaining <= 0:
+            break
+        dur = min(per_clip_dur, remaining)
+        c = _load_clip(cp, dur)
+        if c is None:
+            print(f"  ⚠️ كليب {i+1} فشل — skip")
+            continue
         if i > 0:
-            clip = fadein(clip, 0.4)
-        if i < len(paragraphs) - 1:
-            clip = fadeout(clip, 0.4)
+            c = fadein(c, 0.3)
+        c = fadeout(c, 0.3)
+        middle_clips.append(c)
+        accumulated += dur
+        print(f"  ✅ كليب {i+1} ({dur:.1f}s)")
 
-        scene_clips.append(clip)
-        print(f"  ✅ مشهد {i+1} جاهز ({target_dur:.1f}s)")
+    if not middle_clips:
+        raise ValueError("❌ كل الكليبات فشلت في التحميل!")
 
-    # ─── 5. دمج المشاهد ───────────────────────────────────
-    print("🔗 دمج المشاهد...")
-    base_video = concatenate_videoclips(scene_clips, method="compose")
+    # لو الـ middle أقصر من المطلوب — كرر
+    while accumulated < middle_dur - 1.0 and middle_clips:
+        extra_needed = middle_dur - accumulated
+        c = _load_clip(cat_clips[len(middle_clips) % len(cat_clips)], extra_needed)
+        if c:
+            middle_clips.append(fadein(c, 0.3))
+            accumulated += extra_needed
 
-    # ─── 6. Subtitles معطلة نهائياً ──────────────────────
-    # تم إيقاف الـ subtitles بشكل كامل
-    final_video = base_video
+    middle_video = concatenate_videoclips(middle_clips, method="compose")
+
+    # ─── 4. كليب الـ intro (أول كليب) ────────────────────
+    intro_clip = _load_clip(cat_clips[0], intro_dur)
+    if intro_clip is None:
+        intro_clip = middle_clips[0].subclip(0, intro_dur)
+    intro_clip = fadeout(intro_clip, 0.3)
+
+    # ─── 5. كليب الـ outro (آخر كليب) ────────────────────
+    outro_clip = _load_clip(cat_clips[-1], outro_dur)
+    if outro_clip is None:
+        outro_clip = middle_clips[-1].subclip(0, outro_dur)
+    outro_clip = fadein(outro_clip, 0.3)
+
+    # ─── 6. دمج كل الأجزاء ───────────────────────────────
+    print("🔗 دمج intro + middle + outro...")
+    base_video = concatenate_videoclips([intro_clip, middle_video, outro_clip], method="compose")
+
+    # trim أو pad للـ target_duration بالظبط
+    if base_video.duration > target_duration + 0.5:
+        base_video = base_video.subclip(0, target_duration)
+    elif base_video.duration < target_duration - 0.5:
+        # pad بآخر فريم
+        from moviepy.editor import ImageClip
+        last_frame = base_video.get_frame(base_video.duration - 0.1)
+        pad_dur    = target_duration - base_video.duration
+        pad_clip   = ImageClip(last_frame, duration=pad_dur)
+        base_video = concatenate_videoclips([base_video, pad_clip])
 
     # ─── 7. دمج الصوت ─────────────────────────────────────
-    # الكليبات عندها صوت — نخفته ونحط الـ narration فوقيه
+    # الـ narration بيتسمع في الأول (intro) وفي الآخر (outro) فقط
+    # في المنتصف: صوت الكليبات الأصلي + موسيقى خلفية
+
     try:
-        original_audio = base_video.audio
-        if original_audio:
-            original_audio = volumex(original_audio, 0.08)  # 8% — خلفية خفيفة جداً
-            narration = AudioFileClip(audio_path)
-            mixed = CompositeAudioClip([narration, original_audio])
-            if music_path:
-                music = AudioFileClip(music_path)
-                music = audio_loop(music, duration=total_duration) if music.duration < total_duration \
-                        else music.subclip(0, total_duration)
-                music = volumex(music, 0.10)
-                music = music.audio_fadein(2.0).audio_fadeout(2.0)
-                mixed = CompositeAudioClip([narration, original_audio, music])
-            final_video = final_video.set_audio(mixed)
-        else:
-            final_audio = mix_full_audio(AudioFileClip(audio_path), music_path, [], total_duration)
-            final_video = final_video.set_audio(final_audio)
+        clips_audio = base_video.audio
+        if clips_audio:
+            clips_audio = volumex(clips_audio, 0.35)  # صوت الكليبات في المنتصف واضح
+
+        # الـ narration audio: intro في أول intro_dur ثانية، outro في آخر outro_dur ثانية
+        narration_full = AudioFileClip(audio_path)  # intro + outro concatenated
+        # نحط الـ intro في t=0 والـ outro في t=(total - outro_dur)
+        outro_start = target_duration - outro_dur
+        narration_intro = narration_full.subclip(0, min(intro_dur, narration_full.duration))
+        narration_outro_start = min(intro_dur, narration_full.duration)
+        narration_outro = narration_full.subclip(narration_outro_start)
+        narration_outro = narration_outro.set_start(outro_start)
+
+        audio_layers = [narration_intro, narration_outro]
+        if clips_audio:
+            audio_layers.append(clips_audio)
+
+        if music_path:
+            music = AudioFileClip(music_path)
+            music = audio_loop(music, duration=target_duration) if music.duration < target_duration \
+                    else music.subclip(0, target_duration)
+            music = volumex(music, 0.08)
+            music = music.audio_fadein(2.0).audio_fadeout(2.0)
+            audio_layers.append(music)
+
+        final_audio = CompositeAudioClip(audio_layers)
+        final_video = base_video.set_audio(final_audio)
+
     except Exception as e:
         print(f"  ⚠️ خطأ في دمج الصوت: {e} — fallback")
-        final_video = final_video.set_audio(AudioFileClip(audio_path))
+        final_video = base_video.set_audio(narration_clip)
 
-    final_video = final_video.set_duration(total_duration)
+    final_video = final_video.set_duration(target_duration)
 
     # ─── 8. تصدير ─────────────────────────────────────────
-    print(f"💾 تصدير → {output_path}")
+    print(f"💾 تصدير → {output_path} ({target_duration:.0f}s)")
     final_video.write_videofile(
         output_path,
         fps=FPS,
@@ -946,10 +984,10 @@ def create_cat_video(story_data: dict, audio_path: str, output_filename: str,
         logger=None
     )
 
-    audio_clip.close()
+    narration_clip.close()
     final_video.close()
 
-    print(f"✅ فيديو القطط جاهز: {output_path}")
+    print(f"✅ فيديو الحيوانات جاهز: {output_path}")
     return output_path
 
 
