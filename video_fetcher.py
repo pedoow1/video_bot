@@ -1,4 +1,4 @@
-# video_fetcher.py - جلب مقاطع فيديو من Internet Archive (مجاني، بدون API key)
+# video_fetcher.py - GPT-4o يختار فيديوهات حيوانات من Internet Archive
 
 import os
 import random
@@ -6,43 +6,22 @@ import subprocess
 import json
 import time
 import requests
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, GITHUB_TOKEN
 
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION = 4.0
 CLIP_MAX_DURATION = 30.0
+TARGET_VIDEO_DURATION = 300  # 5 دقايق
 
-TARGET_VIDEO_DURATION = 300  # 5 دقايق = 300 ثانية
-
-# Internet Archive search queries - فيديوهات حيوانات مجانية
-IA_QUERIES = [
-    "funny cat compilation",
-    "funny dog compilation",
-    "cute kitten video",
-    "funny animals compilation",
-    "funny pet video",
-    "cute puppy funny",
-    "funny parrot video",
-    "funny rabbit video",
-    "funny hamster video",
-    "animals being silly",
-]
-
-# كلمات نتجنبها في نتائج IA عشان نضمن إن الفيديو حيوانات فعلاً
-IA_ANIMAL_KEYWORDS = [
-    "cat", "dog", "kitten", "puppy", "animal", "pet", "bird", "parrot",
-    "rabbit", "hamster", "monkey", "panda", "raccoon", "fox", "otter",
-    "funny", "cute", "compilation", "wildlife", "nature",
-]
-
-# Internet Archive Advanced Search API
-IA_SEARCH_URL = "https://archive.org/advancedsearch.php"
-IA_DOWNLOAD_BASE = "https://archive.org/download"
+GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
+IA_SEARCH_URL     = "https://archive.org/advancedsearch.php"
+IA_DOWNLOAD_BASE  = "https://archive.org/download"
+IA_METADATA_BASE  = "https://archive.org/metadata"
 
 
 # ──────────────────────────────────────────
-# Helpers
+# ffprobe / ffmpeg helpers
 # ──────────────────────────────────────────
 
 def _get_duration(path: str) -> float | None:
@@ -62,9 +41,9 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
     if not vid_dur or vid_dur < CLIP_MIN_DURATION:
         return False
 
-    cut_dur = min(target_duration, vid_dur, CLIP_MAX_DURATION)
+    cut_dur   = min(target_duration, vid_dur, CLIP_MAX_DURATION)
     max_start = max(0.0, vid_dur - cut_dur)
-    start = random.uniform(0, max_start) if max_start > 0 else 0.0
+    start     = random.uniform(0, max_start) if max_start > 0 else 0.0
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
@@ -86,26 +65,158 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
 
 
 # ──────────────────────────────────────────
-# Internet Archive - البحث عن فيديوهات
+# Step 1: GPT-4o يختار identifiers من IA
 # ──────────────────────────────────────────
 
-def _search_ia(query: str, rows: int = 20) -> list:
+def _ask_gpt_for_ia_identifiers(count: int) -> list:
     """
-    يبحث في Internet Archive ويرجع list of dicts:
-      { "identifier": str, "title": str, "description": str }
+    بيسأل GPT-4o يدور في Internet Archive ويختار identifiers
+    لفيديوهات حيوانات مضحكة حقيقية.
+    يرجع list of { "identifier": str, "title": str, "reason": str }
+    """
+    if not GITHUB_TOKEN:
+        print("  ⚠️ GH_TOKEN مش موجود — fallback للبحث العادي")
+        return []
+
+    prompt = f"""You are a researcher finding funny animal videos on Internet Archive (archive.org).
+
+Search Internet Archive and give me {count} real video items that contain genuine funny animal footage.
+
+Requirements:
+- Must be actual animal videos (cats, dogs, birds, wildlife, pets) — NOT cartoons, animations, or documentaries
+- Must be funny, cute, or entertaining animal behavior
+- Must be publicly accessible on archive.org
+- Prefer short compilations or clips (under 30 minutes)
+- The identifier must be a real archive.org item
+
+Good examples of what to look for:
+- Funny cat compilations
+- Cute dog videos
+- Animals being silly or clumsy
+- Pet fails and funny moments
+- Wildlife doing unexpected things
+
+You MUST use your knowledge of real archive.org identifiers. Do not invent identifiers.
+
+Reply with JSON ONLY:
+{{
+  "items": [
+    {{"identifier": "real-archive-org-id", "title": "video title", "reason": "why it's funny animals"}},
+    ...
+  ]
+}}
+
+Exactly {count} items. Only real archive.org identifiers you are confident exist."""
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 2000,
+        "temperature": 0.3,
+    }
+
+    for attempt in range(3):
+        try:
+            print(f"  🤖 GPT-4o بيختار identifiers (محاولة {attempt+1})...")
+            r = requests.post(GITHUB_MODELS_URL, headers=headers, json=payload, timeout=60)
+            r.raise_for_status()
+            raw  = r.json()["choices"][0]["message"]["content"]
+            raw  = raw.replace("```json", "").replace("```", "").strip()
+            data = json.loads(raw)
+            items = data.get("items", [])
+            if items:
+                print(f"  ✅ GPT-4o اختار {len(items)} item")
+                for it in items:
+                    print(f"     • {it['identifier']} — {it['title'][:50]}")
+                return items
+        except Exception as e:
+            print(f"  ⚠️ محاولة {attempt+1} فشلت: {e}")
+            time.sleep(2)
+
+    return []
+
+
+# ──────────────────────────────────────────
+# Step 2: التحقق من الـ identifier في IA
+# ──────────────────────────────────────────
+
+def _verify_and_get_files(identifier: str) -> list:
+    """
+    يتحقق إن الـ identifier موجود فعلاً في IA ويجيب ملفات الفيديو منه.
+    يرجع list of { "url": str, "name": str, "size": int }
     """
     try:
+        r = requests.get(f"{IA_METADATA_BASE}/{identifier}", timeout=15)
+        if r.status_code != 200:
+            print(f"  ⚠️ {identifier}: مش موجود في IA (status {r.status_code})")
+            return []
+
+        files = r.json().get("files", [])
+        video_files = []
+        for f in files:
+            name = f.get("name", "")
+            fmt  = f.get("format", "").lower()
+            size = int(f.get("size", 0))
+            if (
+                (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
+                and size > 500_000
+                and size < 500_000_000
+                and not name.startswith("_")
+            ):
+                video_files.append({
+                    "url":  f"{IA_DOWNLOAD_BASE}/{identifier}/{requests.utils.quote(name)}",
+                    "name": name,
+                    "size": size,
+                })
+
+        # رتب بالحجم — متوسط الحجم أفضل
+        video_files.sort(key=lambda x: abs(x["size"] - 50_000_000))
+        return video_files[:3]
+
+    except Exception as e:
+        print(f"  ⚠️ metadata خطأ ({identifier}): {e}")
+        return []
+
+
+# ──────────────────────────────────────────
+# Step 3: لو GPT-4o فشل — بحث عادي في IA
+# ──────────────────────────────────────────
+
+# كلمات دي بتأكد إن النتيجة حيوانات فعلاً
+_ANIMAL_KWS = [
+    "cat", "dog", "kitten", "puppy", "animal", "pet", "bird", "parrot",
+    "rabbit", "hamster", "monkey", "panda", "raccoon", "fox", "otter",
+    "funny", "cute", "compilation", "wildlife",
+]
+
+_IA_FALLBACK_QUERIES = [
+    "funny cat compilation",
+    "funny dog compilation",
+    "funny animals compilation",
+    "cute kitten video",
+    "cute puppy funny",
+    "funny pet video",
+    "funny parrot talking",
+    "animals being silly",
+]
+
+
+def _search_ia_fallback(query: str, rows: int = 15) -> list:
+    try:
         params = {
-            "q": f"({query}) AND mediatype:movies",
-            "fl[]": ["identifier", "title", "description"],
-            "rows": rows,
-            "page": random.randint(1, 3),  # randomize للتنويع
+            "q":     f"({query}) AND mediatype:movies",
+            "fl[]": ["identifier", "title"],
+            "rows":  rows,
+            "page":  random.randint(1, 3),
             "output": "json",
-            "sort[]": "downloads desc",    # الأكثر تحميلاً أولاً
+            "sort[]": "downloads desc",
         }
         r = requests.get(IA_SEARCH_URL, params=params, timeout=15)
         if r.status_code != 200:
-            print(f"  ⚠️ IA بحث فشل ({query}): status {r.status_code}")
             return []
         docs = r.json().get("response", {}).get("docs", [])
         results = []
@@ -113,159 +224,65 @@ def _search_ia(query: str, rows: int = 20) -> list:
             if not d.get("identifier"):
                 continue
             title = (d.get("title", "") or "").lower()
-            desc  = (d.get("description", "") or "").lower()
-            combined = title + " " + desc
-            # فلترة: لازم يحتوي على كلمة حيوان واحدة على الأقل
-            if any(kw in combined for kw in IA_ANIMAL_KEYWORDS):
+            if any(kw in title for kw in _ANIMAL_KWS):
                 results.append({
-                    "identifier":  d.get("identifier", ""),
-                    "title":       d.get("title", query),
-                    "description": d.get("description", f"{query} video from Internet Archive"),
+                    "identifier": d["identifier"],
+                    "title":      d.get("title", query),
+                    "reason":     f"IA search: {query}",
                 })
         return results
     except Exception as e:
-        print(f"  ⚠️ IA بحث خطأ ({query}): {e}")
+        print(f"  ⚠️ IA fallback بحث فشل ({query}): {e}")
         return []
 
 
-def _get_video_files(identifier: str) -> list:
-    """
-    يجيب ملفات الفيديو لـ item معين من Internet Archive.
-    يرجع list of { "url": str, "name": str, "size": int }
-    """
+# ──────────────────────────────────────────
+# Step 4: تحميل الكليبات
+# ──────────────────────────────────────────
+
+def _download_clip(video_file: dict, identifier: str, title: str, clip_duration: float) -> dict | None:
+    clip_id   = f"ia_{identifier[:35]}".replace("/", "_").replace(" ", "_")
+    clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
+    tmp       = os.path.join(CLIPS_DIR, f"_tmp_{clip_id}.mp4")
+
+    # كاش
+    if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
+        print(f"  ✅ كاش: {clip_id}")
+        return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
+
     try:
-        meta_url = f"https://archive.org/metadata/{identifier}"
-        r = requests.get(meta_url, timeout=15)
+        size_mb = video_file["size"] // 1024 // 1024
+        print(f"  ⬇️ {identifier} / {video_file['name']} ({size_mb}MB)...")
+        r = requests.get(video_file["url"], stream=True, timeout=120)
         if r.status_code != 200:
-            return []
-        files = r.json().get("files", [])
-        video_files = []
-        for f in files:
-            name = f.get("name", "")
-            fmt = f.get("format", "").lower()
-            size = int(f.get("size", 0))
-            # فلتر: فيديو mp4 أو mpeg4 بس، مش ملفات metadata
-            if (
-                (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
-                and size > 500_000    # أكبر من 500KB
-                and size < 500_000_000  # أصغر من 500MB
-                and not name.startswith("_")
-            ):
-                video_files.append({
-                    "url":  f"{IA_DOWNLOAD_BASE}/{identifier}/{name}",
-                    "name": name,
-                    "size": size,
-                })
-        # رتب بالحجم - متوسط الحجم أحسن (مش أصغر ولا أكبر)
-        video_files.sort(key=lambda x: abs(x["size"] - 50_000_000))
-        return video_files[:3]  # أحسن 3 اختيارات
+            print(f"  ⚠️ تحميل فشل: {r.status_code}")
+            return None
+
+        downloaded = 0
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 256):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if downloaded > 150_000_000:  # max 150MB
+                    break
+
+        if not os.path.exists(tmp) or os.path.getsize(tmp) < 500_000:
+            return None
+
+        if _cut_clip(tmp, clip_path, clip_duration):
+            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB)")
+            return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
+        else:
+            print(f"  ⚠️ cut فشل")
+            return None
+
     except Exception as e:
-        print(f"  ⚠️ IA metadata خطأ ({identifier}): {e}")
-        return []
-
-
-# ──────────────────────────────────────────
-# Internet Archive - تحميل الكليبات
-# ──────────────────────────────────────────
-
-def _fetch_from_ia(count: int, clip_duration: float) -> list:
-    """
-    يرجع list of dicts:
-      { "path": str, "description": str, "ia_url": str }
-    """
-    print(f"  🎬 Internet Archive — جاري جلب {count} فيديو...")
-    clips = []
-
-    # اجمع نتائج من queries متعددة
-    queries = random.sample(IA_QUERIES, min(len(IA_QUERIES), 4))
-    all_items = []
-    for q in queries:
-        items = _search_ia(q, rows=15)
-        all_items.extend(items)
-        time.sleep(0.5)  # respect rate limits
-
-    # shuffle عشان التنويع
-    random.shuffle(all_items)
-
-    # إزالة التكرار
-    seen_ids = set()
-    unique_items = []
-    for item in all_items:
-        if item["identifier"] not in seen_ids:
-            seen_ids.add(item["identifier"])
-            unique_items.append(item)
-
-    for item in unique_items:
-        if len(clips) >= count:
-            break
-
-        identifier = item["identifier"]
-        print(f"  🔍 IA item: {identifier}")
-
-        video_files = _get_video_files(identifier)
-        if not video_files:
-            print(f"  ⚠️ مفيش فيديو في {identifier}")
-            continue
-
-        # جرب أول ملف
-        vf = video_files[0]
-        clip_id = f"ia_{identifier[:30]}".replace("/", "_").replace(" ", "_")
-        clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
-        tmp = os.path.join(CLIPS_DIR, f"_tmp_{clip_id}.mp4")
-
-        # لو موجود كاش
-        if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-            clips.append({
-                "path":        clip_path,
-                "description": item["title"],
-                "ia_url":      f"https://archive.org/details/{identifier}",
-            })
-            print(f"  ✅ كاش موجود: {clip_id}")
-            continue
-
-        try:
-            print(f"  ⬇️ IA [{len(clips)+1}/{count}] {vf['name']} ({vf['size']//1024//1024}MB)...")
-            r = requests.get(vf["url"], stream=True, timeout=120)
-            if r.status_code != 200:
-                print(f"  ⚠️ تحميل فشل: {r.status_code}")
-                continue
-
-            with open(tmp, "wb") as f:
-                downloaded = 0
-                for chunk in r.iter_content(chunk_size=1024 * 256):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    # توقف لو حملنا كفاية (max 100MB)
-                    if downloaded > 100_000_000:
-                        break
-
-            if not os.path.exists(tmp) or os.path.getsize(tmp) < 500_000:
-                print(f"  ⚠️ ملف صغير أو فاشل")
-                continue
-
-            dur = clip_duration or random.uniform(CLIP_MIN_DURATION, CLIP_MAX_DURATION)
-            if _cut_clip(tmp, clip_path, dur):
-                print(f"  ✅ IA جاهز ({os.path.getsize(clip_path)//1024} KB)")
-                clips.append({
-                    "path":        clip_path,
-                    "description": item["title"],
-                    "ia_url":      f"https://archive.org/details/{identifier}",
-                })
-            else:
-                print(f"  ⚠️ cut فشل — مدة الفيديو قصيرة أو corrupt")
-
-        except requests.exceptions.Timeout:
-            print(f"  ⚠️ timeout في التحميل")
-        except Exception as e:
-            print(f"  ⚠️ خطأ: {e}")
-        finally:
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-
-    return clips
+        print(f"  ⚠️ خطأ: {e}")
+        return None
+    finally:
+        if os.path.exists(tmp):
+            try: os.remove(tmp)
+            except: pass
 
 
 # ──────────────────────────────────────────
@@ -274,56 +291,84 @@ def _fetch_from_ia(count: int, clip_duration: float) -> list:
 
 def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     """
-    يرجع list of dicts:
-      { "path": str, "description": str, "ia_url": str }
-
-    clip_duration: لو None بيحسبها تلقائياً عشان الفيديو كله يوصل TARGET_VIDEO_DURATION
+    يرجع list of dicts: { "path", "description", "ia_url" }
     """
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
-    # حساب مدة كل كليب
     if clip_duration is None:
-        clip_duration = TARGET_VIDEO_DURATION / count
-        clip_duration = min(clip_duration, CLIP_MAX_DURATION)
-        print(f"🕐 مدة كل كليب: {clip_duration:.1f}s (تارجت {TARGET_VIDEO_DURATION}s / {count} مشهد)")
+        clip_duration = min(TARGET_VIDEO_DURATION / count, CLIP_MAX_DURATION)
+        print(f"🕐 مدة كل كليب: {clip_duration:.1f}s")
 
+    # كاش موجود؟
     existing = _get_existing_clips()
     if len(existing) >= count:
-        print(f"✅ {count} كليب موجودين في الكاش — مش محتاج تحميل")
+        print(f"✅ {count} كليب موجودين في الكاش")
         return random.sample(existing, count)
 
-    clips = list(existing)
+    clips  = list(existing)
     needed = count - len(clips)
 
-    print(f"🎬 جاري جلب {needed} مقطع من Internet Archive...")
-    ia_clips = _fetch_from_ia(needed, clip_duration)
-    clips.extend(ia_clips)
+    # ── Step 1: GPT-4o يختار identifiers ──
+    print(f"\n🤖 GPT-4o بيختار {needed + 3} فيديو من Internet Archive...")
+    gpt_items = _ask_gpt_for_ia_identifiers(needed + 3)  # نطلب أكتر للـ safety
 
-    # كرر لو لسه ناقص
+    # ── Step 2: لو GPT-4o فشل — fallback ──
+    if not gpt_items:
+        print("  ⚠️ GPT-4o مرجعش — بيبحث عادي في IA...")
+        queries = random.sample(_IA_FALLBACK_QUERIES, min(4, len(_IA_FALLBACK_QUERIES)))
+        for q in queries:
+            gpt_items.extend(_search_ia_fallback(q))
+            time.sleep(0.5)
+        # إزالة تكرار
+        seen = set()
+        unique = []
+        for it in gpt_items:
+            if it["identifier"] not in seen:
+                seen.add(it["identifier"])
+                unique.append(it)
+        gpt_items = unique
+
+    random.shuffle(gpt_items)
+
+    # ── Step 3: تحميل الكليبات ──
+    for item in gpt_items:
+        if len(clips) >= count:
+            break
+
+        identifier = item["identifier"]
+        title      = item["title"]
+
+        print(f"\n  🔍 تحقق من: {identifier}")
+        video_files = _verify_and_get_files(identifier)
+
+        if not video_files:
+            print(f"  ⚠️ مفيش فيديو mp4 في {identifier}")
+            continue
+
+        result = _download_clip(video_files[0], identifier, title, clip_duration)
+        if result:
+            clips.append(result)
+
+    # كرر لو ناقص
     if 0 < len(clips) < count:
-        print(f"  ⚠️ عندنا {len(clips)} من {count} — هنكرر")
+        print(f"  ⚠️ عندنا {len(clips)} من {count} — بنكرر")
         while len(clips) < count:
             clips.append(random.choice(clips))
 
     result = clips[:count]
-    print(f"✅ {len(result)} مقطع جاهز!")
+    print(f"\n✅ {len(result)} كليب جاهز!")
     return result
 
 
 def _get_existing_clips() -> list:
-    """يرجع existing clips كـ list of dicts"""
     if not os.path.exists(CLIPS_DIR):
         return []
     clips = []
     for f in os.listdir(CLIPS_DIR):
         if f.endswith(".mp4") and not f.startswith("_tmp"):
-            full_path = os.path.join(CLIPS_DIR, f)
-            if os.path.getsize(full_path) > 10_000:
-                clips.append({
-                    "path":        full_path,
-                    "description": f"cached clip: {f}",
-                    "ia_url":      "",
-                })
+            full = os.path.join(CLIPS_DIR, f)
+            if os.path.getsize(full) > 10_000:
+                clips.append({"path": full, "description": f"cached: {f}", "ia_url": ""})
     random.shuffle(clips)
     return clips
 
@@ -343,7 +388,7 @@ def clear_clips_cache():
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار IA fetcher...\n")
+    print("🧪 اختبار GPT-4o + IA fetcher...\n")
     clips = fetch_cat_clips(count=3)
     print(f"\n✅ ({len(clips)}):")
     for c in clips:
