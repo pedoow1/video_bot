@@ -18,22 +18,18 @@ IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
 IA_DOWNLOAD_BASE = "https://archive.org/download"
 IA_METADATA_BASE = "https://archive.org/metadata"
 
-# queries واسعة بما يكفي عشان IA يرجع نتائج
+# نبحث مباشرة جوه collections معروفة بفيديوهات حيوانات مضحكة
+# FailArmy-Archive فيه بالظبط اللي إحنا محتاجينه
 IA_QUERIES = [
-    'title:(funny cats) AND mediatype:movies',
-    'title:(funny dogs) AND mediatype:movies',
-    'title:(funny animals) AND mediatype:movies',
-    'title:(funny pets) AND mediatype:movies',
-    'title:(cat fails) AND mediatype:movies',
-    'title:(dog fails) AND mediatype:movies',
-    'title:(animal fails) AND mediatype:movies',
-    'title:(silly animals) AND mediatype:movies',
-    'title:(hilarious animals) AND mediatype:movies',
-    'title:(animals being silly) AND mediatype:movies',
-    'title:(funny animal compilation) AND mediatype:movies',
-    'title:(cute funny cats) AND mediatype:movies',
-    'title:(funny cat moments) AND mediatype:movies',
-    'title:(funny dog moments) AND mediatype:movies',
+    'collection:FailArmy-Archive AND title:(animal) AND mediatype:movies',
+    'collection:FailArmy-Archive AND title:(cat) AND mediatype:movies',
+    'collection:FailArmy-Archive AND title:(dog) AND mediatype:movies',
+    'collection:FailArmy-Archive AND title:(pet) AND mediatype:movies',
+    'collection:FailArmy-Archive AND title:(funny) AND mediatype:movies',
+    # fallback - بحث عام لو الـ collection مش كافي
+    'title:(funny cats fails) AND mediatype:movies',
+    'title:(funny dogs fails) AND mediatype:movies',
+    'title:(animal fails compilation) AND mediatype:movies',
 ]
 
 # استبعاد — لو أي كلمة دي موجودة في العنوان → تجاهل
@@ -183,22 +179,29 @@ def _get_mp4_files(identifier: str) -> list:
         files       = r.json().get("files", [])
         video_files = []
         for f in files:
+            length = f.get("length", None)
+            try:
+                dur = float(length) if length else None
+            except (ValueError, TypeError):
+                dur = None
             name = f.get("name", "")
             fmt  = f.get("format", "").lower()
             size = int(f.get("size", 0))
             if (
                 (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
-                and 500_000 < size < 150_000_000   # 500KB → 150MB
+                and 500_000 < size  # 500KB minimum
+                and (dur is None or dur <= 60)  # مدة أقل من 60 ثانية
                 and not name.startswith("_")
             ):
                 video_files.append({
-                    "url":  f"{IA_DOWNLOAD_BASE}/{identifier}/{requests.utils.quote(name)}",
-                    "name": name,
-                    "size": size,
+                    "url":      f"{IA_DOWNLOAD_BASE}/{identifier}/{requests.utils.quote(name)}",
+                    "name":     name,
+                    "size":     size,
+                    "duration": dur,
                 })
 
-        # نفضل الملفات المتوسطة الحجم (حوالي 15MB)
-        video_files.sort(key=lambda x: abs(x["size"] - 15_000_000))
+        # نفضل الأقصر مدة، ولو مفيش duration نرتب بالحجم
+        video_files.sort(key=lambda x: x["duration"] if x["duration"] else 9999)
         return video_files[:2]
 
     except Exception as e:
@@ -213,43 +216,44 @@ def _get_mp4_files(identifier: str) -> list:
 def _download_clip(url: str, identifier: str, title: str, clip_duration: float) -> dict | None:
     safe      = identifier[:35].replace("/", "_").replace(" ", "_")
     clip_path = os.path.join(CLIPS_DIR, f"ia_{safe}.mp4")
-    tmp       = os.path.join(CLIPS_DIR, f"_tmp_{safe}.mp4")
 
     if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
         print(f"  ✅ كاش: {safe}")
         return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
 
     try:
-        print(f"  ⬇️ {identifier} ...")
-        r = requests.get(url, stream=True, timeout=120,
-                         headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200:
-            print(f"  ⚠️ HTTP {r.status_code}")
-            return None
+        print(f"  ✂️ بيقطع من URL مباشرة: {identifier} ...")
 
-        downloaded = 0
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 256):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if downloaded > 150_000_000:
-                    break
+        # اختيار نقطة عشوائية للبداية (أول 60% من الفيديو)
+        start = random.uniform(10, 120)
 
-        if os.path.getsize(tmp) < 500_000:
-            return None
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", str(round(start, 2)),
+            "-i", url,
+            "-t", str(round(clip_duration, 2)),
+            "-vf", (
+                "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,"
+                "setsar=1"
+            ),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            clip_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
 
-        if _cut_clip(tmp, clip_path, clip_duration):
+        if r.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB) — {title[:50]}")
             return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
+
+        print(f"  ⚠️ ffmpeg فشل: {r.stderr[:200] if r.stderr else 'unknown'}")
         return None
 
     except Exception as e:
         print(f"  ⚠️ خطأ: {e}")
         return None
-    finally:
-        if os.path.exists(tmp):
-            try: os.remove(tmp)
-            except: pass
 
 
 # ──────────────────────────────────────────
