@@ -17,16 +17,23 @@ TARGET_VIDEO_DURATION = 300  # 5 دقايق = 300 ثانية
 
 # Internet Archive search queries - فيديوهات حيوانات مجانية
 IA_QUERIES = [
-    "funny animals",
-    "cute cats",
-    "funny dogs",
-    "funny pets",
-    "cute kittens",
-    "funny birds",
-    "animal videos",
-    "cute animals",
-    "funny wildlife",
-    "pet videos funny",
+    "funny cat compilation",
+    "funny dog compilation",
+    "cute kitten video",
+    "funny animals compilation",
+    "funny pet video",
+    "cute puppy funny",
+    "funny parrot video",
+    "funny rabbit video",
+    "funny hamster video",
+    "animals being silly",
+]
+
+# كلمات نتجنبها في نتائج IA عشان نضمن إن الفيديو حيوانات فعلاً
+IA_ANIMAL_KEYWORDS = [
+    "cat", "dog", "kitten", "puppy", "animal", "pet", "bird", "parrot",
+    "rabbit", "hamster", "monkey", "panda", "raccoon", "fox", "otter",
+    "funny", "cute", "compilation", "wildlife", "nature",
 ]
 
 # Internet Archive Advanced Search API
@@ -101,15 +108,21 @@ def _search_ia(query: str, rows: int = 20) -> list:
             print(f"  ⚠️ IA بحث فشل ({query}): status {r.status_code}")
             return []
         docs = r.json().get("response", {}).get("docs", [])
-        return [
-            {
-                "identifier":  d.get("identifier", ""),
-                "title":       d.get("title", query),
-                "description": d.get("description", f"{query} video from Internet Archive"),
-            }
-            for d in docs
-            if d.get("identifier")
-        ]
+        results = []
+        for d in docs:
+            if not d.get("identifier"):
+                continue
+            title = (d.get("title", "") or "").lower()
+            desc  = (d.get("description", "") or "").lower()
+            combined = title + " " + desc
+            # فلترة: لازم يحتوي على كلمة حيوان واحدة على الأقل
+            if any(kw in combined for kw in IA_ANIMAL_KEYWORDS):
+                results.append({
+                    "identifier":  d.get("identifier", ""),
+                    "title":       d.get("title", query),
+                    "description": d.get("description", f"{query} video from Internet Archive"),
+                })
+        return results
     except Exception as e:
         print(f"  ⚠️ IA بحث خطأ ({query}): {e}")
         return []
