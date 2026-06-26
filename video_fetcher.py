@@ -8,7 +8,8 @@ import time
 import requests
 from config import OUTPUT_DIR
 
-CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
+CLIPS_DIR     = os.path.join(OUTPUT_DIR, "cat_clips")
+USED_IDS_FILE = os.path.join(OUTPUT_DIR, "used_identifiers.json")
 
 CLIP_MIN_DURATION  = 4.0
 CLIP_MAX_DURATION  = 25.0
@@ -57,6 +58,29 @@ ANIMAL_WORDS = [
     "parrot", "rabbit", "hamster", "goat", "duck",
     "monkey", "raccoon", "otter", "wildlife",
 ]
+
+
+# ──────────────────────────────────────────
+# Used identifiers — عشان منكررش نفس الفيديوهات
+# ──────────────────────────────────────────
+
+def _load_used_ids() -> set:
+    try:
+        if os.path.exists(USED_IDS_FILE):
+            with open(USED_IDS_FILE, "r") as f:
+                return set(json.load(f))
+    except Exception:
+        pass
+    return set()
+
+def _save_used_id(identifier: str):
+    used = _load_used_ids()
+    used.add(identifier)
+    try:
+        with open(USED_IDS_FILE, "w") as f:
+            json.dump(list(used), f)
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────
@@ -112,16 +136,8 @@ def _is_valid_clip(title: str, subject) -> bool:
     subj_lower  = (subject if isinstance(subject, str) else " ".join(subject or [])).lower()
     combined    = title_lower + " " + subj_lower
 
-    # استبعاد
+    # استبعاد بس — مادام بنبحث في FailArmy مش محتاجين نفلتر على funny أو animal
     if any(bw in combined for bw in BLACKLIST_WORDS):
-        return False
-
-    # لازم فيه حيوان
-    if not any(aw in combined for aw in ANIMAL_WORDS):
-        return False
-
-    # لازم فيه كلمة مضحك — بس بنفحص العنوان بس (مش combined) عشان نضمن إنه فعلاً funny
-    if not any(fw in title_lower for fw in FUNNY_WORDS):
         return False
 
     return True
@@ -137,9 +153,9 @@ def _search_ia(query: str, rows: int = 30) -> list:
             "q":      query,
             "fl[]":   ["identifier", "title", "subject", "downloads"],
             "rows":   rows,
-            "page":   random.randint(1, 3),
+            "page":   random.randint(1, 10),
             "output": "json",
-            "sort[]": "downloads desc",
+            "sort[]": "random desc",
         }
         r = requests.get(IA_SEARCH_URL, params=params, timeout=15)
         if r.status_code != 200:
@@ -246,6 +262,7 @@ def _download_clip(url: str, identifier: str, title: str, clip_duration: float) 
 
         if r.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
             print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB) — {title[:50]}")
+            _save_used_id(identifier)
             return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
 
         print(f"  ⚠️ ffmpeg فشل: {r.stderr[:200] if r.stderr else 'unknown'}")
