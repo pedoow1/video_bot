@@ -28,31 +28,44 @@ IA_METADATA_BASE = "https://archive.org/metadata"
 #   AND NOT لاستبعاد الكارتون والأنيميشن
 
 IA_QUERIES = [
-    'title:(funny cats) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
-    'title:(funny dogs) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
-    'title:(funny animals compilation) AND mediatype:movies AND NOT subject:animation',
-    'title:(cute kittens) AND mediatype:movies AND NOT subject:animation',
-    'title:(cute puppies) AND mediatype:movies AND NOT subject:animation',
-    'title:(funny pets) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
-    'title:(animals being funny) AND mediatype:movies AND NOT subject:animation',
-    'title:(cat video) AND subject:animals AND mediatype:movies AND NOT subject:animation',
-    'title:(dog video) AND subject:animals AND mediatype:movies AND NOT subject:animation',
-    'title:(funny wildlife) AND mediatype:movies AND NOT subject:animation',
+    # مواقف مضحكة مع كلمة funny لازم تكون في العنوان
+    'title:(funny cats fails) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny dogs fails) AND mediatype:movies AND NOT subject:animation',
+    'title:(animals funny moments) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny animal fails compilation) AND mediatype:movies AND NOT subject:animation',
+    'title:(pets funny moments) AND mediatype:movies AND NOT subject:animation',
+    'title:(hilarious animals) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny animal reactions) AND mediatype:movies AND NOT subject:animation',
+    'title:(animals being silly) AND mediatype:movies AND NOT subject:animation',
+    'title:(cats being funny) AND mediatype:movies AND NOT subject:animation',
+    'title:(dogs being funny) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny animal clips) AND mediatype:movies AND NOT subject:animation',
+    'title:(animals try not to laugh) AND mediatype:movies AND NOT subject:animation',
 ]
 
-# كلمات لو اتلاقت في العنوان تبان إن الفيديو مش حيوانات حقيقية
+# كلمات لو اتلاقت في العنوان → استبعاد
 BLACKLIST_WORDS = [
     "cartoon", "animation", "animated", "anime", "looney", "tunes",
-    "tom and jerry", "mickey", "disney", "pixar", "documentary about",
-    "lecture", "tutorial", "training", "news", "interview", "film",
-    "movie trailer", "horror", "science", "history",
+    "tom and jerry", "mickey", "disney", "pixar", "documentary",
+    "lecture", "tutorial", "training", "news", "interview",
+    "movie trailer", "horror", "science", "history", "nature film",
+    "wildlife documentary", "facts about", "education",
+    # استبعاد الفيديوهات العامة اللي مش فيها مواقف مضحكة
+    "cute animals", "baby animals", "adorable", "relaxing",
+    "satisfying", "calming", "beautiful", "amazing nature",
 ]
 
-# كلمات لازم تكون في العنوان أو الـ subject
-ANIMAL_WHITELIST = [
+# لازم يكون في العنوان كلمة "funny" أو "hilarious" أو "fails" أو "silly" + حيوان
+FUNNY_REQUIRED = [
+    "funny", "hilarious", "fails", "fail", "silly", "humor",
+    "humorous", "comedy", "lol", "laugh", "reactions", "moments",
+    "try not to laugh", "being silly", "being funny",
+]
+
+ANIMAL_REQUIRED = [
     "cat", "cats", "kitten", "kittens", "dog", "dogs", "puppy", "puppies",
     "animal", "animals", "pet", "pets", "bird", "parrot", "rabbit",
-    "hamster", "funny", "cute", "compilation", "wildlife",
+    "hamster", "goat", "duck", "monkey", "raccoon", "otter",
 ]
 
 
@@ -113,8 +126,12 @@ def _is_real_animal_video(title: str, subject) -> bool:
     if any(bw in combined for bw in BLACKLIST_WORDS):
         return False
 
-    # لازم يكون فيه حاجة من الـ whitelist
-    if not any(aw in combined for aw in ANIMAL_WHITELIST):
+    # لازم يكون فيه حيوان
+    if not any(aw in combined for aw in ANIMAL_REQUIRED):
+        return False
+
+    # لازم يكون فيه كلمة تدل على إنه مضحك — ده الفلتر الأساسي
+    if not any(fw in combined for fw in FUNNY_REQUIRED):
         return False
 
     return True
