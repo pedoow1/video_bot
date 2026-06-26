@@ -1,5 +1,3 @@
-# video_fetcher.py
-
 import os
 import random
 import subprocess
@@ -19,16 +17,13 @@ IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
 IA_DOWNLOAD_BASE = "https://archive.org/download"
 IA_METADATA_BASE = "https://archive.org/metadata"
 
-# FailArmy-Archive — item واحد كبير فيه كل فيديوهات FailArmy
 FAILARMY_IDENTIFIER = "FailArmy-Archive"
 
-# كلمات في اسم الملف تدل على إنه حيوانات
 ANIMAL_FILENAME_WORDS = [
     "animal", "cat", "dog", "pet", "bird", "wildlife",
     "kitten", "puppy", "goat", "duck", "monkey",
 ]
 
-# fallback queries لو FailArmy مش كافي
 IA_QUERIES = [
     'title:(funny cats fails) AND mediatype:movies',
     'title:(funny dogs fails) AND mediatype:movies',
@@ -36,7 +31,6 @@ IA_QUERIES = [
     'title:(funny animals) AND mediatype:movies',
 ]
 
-# استبعاد — لو أي كلمة دي موجودة في العنوان → تجاهل
 BLACKLIST_WORDS = [
     "cartoon", "animation", "animated", "anime",
     "tom and jerry", "mickey", "disney", "pixar",
@@ -47,14 +41,12 @@ BLACKLIST_WORDS = [
     "nature sounds", "asmr",
 ]
 
-# لازم في العنوان أو الـ subject كلمة تدل على إنه مضحك
 FUNNY_WORDS = [
     "funny", "hilarious", "fails", "fail", "silly",
     "humor", "comedy", "lol", "laugh", "amusing",
     "being silly", "being funny", "chaos", "moments",
 ]
 
-# لازم فيه حيوان
 ANIMAL_WORDS = [
     "cat", "cats", "kitten", "dog", "dogs", "puppy",
     "animal", "animals", "pet", "pets", "bird",
@@ -64,26 +56,62 @@ ANIMAL_WORDS = [
 
 
 # ──────────────────────────────────────────
-# Used identifiers — عشان منكررش نفس الفيديوهات
+# Used identifiers — مع حفظ آخر نقطة قطع
 # ──────────────────────────────────────────
 
-def _load_used_ids() -> set:
+def _load_used_ids() -> dict:
+    """يرجع dict: {identifier: {"last_pos": float, "completed": bool}}"""
     try:
         if os.path.exists(USED_IDS_FILE):
             with open(USED_IDS_FILE, "r") as f:
-                return set(json.load(f))
+                data = json.load(f)
+                # دعم الفورمات القديم (list)
+                if isinstance(data, list):
+                    return {k: {"last_pos": 0, "completed": True} for k in data}
+                return data
     except Exception:
         pass
-    return set()
+    return {}
 
-def _save_used_id(identifier: str):
+
+def _save_used_id(identifier: str, last_pos: float, completed: bool = False):
     used = _load_used_ids()
-    used.add(identifier)
+    # لو اتكمل خالص، متحدثش الـ position
+    if identifier in used and used[identifier].get("completed"):
+        return
+    used[identifier] = {"last_pos": last_pos, "completed": completed}
     try:
         with open(USED_IDS_FILE, "w") as f:
-            json.dump(list(used), f)
+            json.dump(used, f, indent=2)
     except Exception:
         pass
+
+
+def _get_next_start(identifier: str, vid_dur: float, clip_duration: float) -> float | None:
+    """
+    يحسب نقطة البداية التالية للفيديو.
+    - لو الفيديو اتكمل → يرجع None (تجاهله)
+    - لو فيه last_pos → يكمل منها
+    - لو جديد → يبدأ من الأول
+    """
+    used = _load_used_ids()
+
+    if identifier in used:
+        info = used[identifier]
+        if info.get("completed"):
+            return None  # الفيديو خلص، تجاهله
+        last_pos = info.get("last_pos", 0)
+    else:
+        last_pos = 0
+
+    next_start = last_pos
+
+    # لو مفيش وقت كافي للكليب التالي
+    if next_start + clip_duration > vid_dur:
+        _save_used_id(identifier, vid_dur, completed=True)
+        return None
+
+    return next_start
 
 
 # ──────────────────────────────────────────
@@ -96,6 +124,20 @@ def _get_duration(path: str) -> float | None:
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "json", path],
             capture_output=True, text=True, timeout=15,
+        )
+        return float(json.loads(r.stdout)["format"]["duration"])
+    except Exception:
+        return None
+
+
+def _get_url_duration(url: str) -> float | None:
+    """يجيب مدة الفيديو من URL مباشرة بدون تحميل كامل"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "json", url],
+            capture_output=True, text=True, timeout=20,
         )
         return float(json.loads(r.stdout)["format"]["duration"])
     except Exception:
@@ -139,8 +181,10 @@ def _is_valid_clip(title: str, subject) -> bool:
     subj_lower  = (subject if isinstance(subject, str) else " ".join(subject or [])).lower()
     combined    = title_lower + " " + subj_lower
 
-    # استبعاد بس — مادام بنبحث في FailArmy مش محتاجين نفلتر على funny أو animal
     if any(bw in combined for bw in BLACKLIST_WORDS):
+        return False
+
+    if not any(aw in combined for aw in ANIMAL_WORDS):
         return False
 
     return True
@@ -189,7 +233,7 @@ def _search_ia(query: str, rows: int = 30) -> list:
 # جلب فيديوهات من FailArmy-Archive مباشرة
 # ──────────────────────────────────────────
 
-def _get_failarmy_clips(used_ids: set, count: int) -> list:
+def _get_failarmy_clips(used_ids: dict, count: int) -> list:
     """بيجيب قائمة فيديوهات من FailArmy-Archive مباشرة من الـ metadata"""
     try:
         print(f"  🎬 بيجيب قائمة FailArmy-Archive...")
@@ -207,23 +251,15 @@ def _get_failarmy_clips(used_ids: set, count: int) -> list:
 
             if not (name.lower().endswith(".mp4") or "mpeg4" in fmt):
                 continue
-            if size < 5_000_000:  # أقل من 5MB → مش فيديو حقيقي
+            if size < 5_000_000:
                 continue
             if name.startswith("_"):
                 continue
 
-            name_lower = name.lower()
-
-            # استبعاد الـ blacklist
-            if any(bw in name_lower for bw in BLACKLIST_WORDS):
-                continue
-
-            # نفضل الفيديوهات اللي فيها حيوانات في الاسم
-            has_animal = any(aw in name_lower for aw in ANIMAL_FILENAME_WORDS)
-
-            # استبعاد اللي اتاستخدموا
             file_id = f"{FAILARMY_IDENTIFIER}/{name}"
-            if file_id in used_ids:
+
+            # لو اتكمل خالص، تجاهله
+            if file_id in used_ids and used_ids[file_id].get("completed"):
                 continue
 
             candidates.append({
@@ -231,17 +267,11 @@ def _get_failarmy_clips(used_ids: set, count: int) -> list:
                 "title":      name.replace(".mp4", "").replace(".", " "),
                 "url":        f"{IA_DOWNLOAD_BASE}/{FAILARMY_IDENTIFIER}/{requests.utils.quote(name)}",
                 "size":       size,
-                "has_animal": has_animal,
             })
 
-        # نفضل الفيديوهات اللي فيها حيوانات، وبعدين عشوائي
-        animal_clips = [c for c in candidates if c["has_animal"]]
-        other_clips  = [c for c in candidates if not c["has_animal"]]
-        random.shuffle(animal_clips)
-        random.shuffle(other_clips)
-
-        result = (animal_clips + other_clips)[:count * 3]  # نجيب أكتر عشان لو في حاجة فشلت
-        print(f"  ✅ {len(result)} ملف من FailArmy ({len(animal_clips)} حيوانات)")
+        random.shuffle(candidates)
+        result = candidates[:count * 3]
+        print(f"  ✅ {len(result)} ملف من FailArmy")
         return result
 
     except Exception as e:
@@ -272,8 +302,8 @@ def _get_mp4_files(identifier: str) -> list:
             size = int(f.get("size", 0))
             if (
                 (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
-                and 500_000 < size  # 500KB minimum
-                and (dur is None or dur <= 60)  # مدة أقل من 60 ثانية
+                and 500_000 < size
+                and (dur is None or dur <= 60)
                 and not name.startswith("_")
             ):
                 video_files.append({
@@ -283,7 +313,6 @@ def _get_mp4_files(identifier: str) -> list:
                     "duration": dur,
                 })
 
-        # نفضل الأقصر مدة، ولو مفيش duration نرتب بالحجم
         video_files.sort(key=lambda x: x["duration"] if x["duration"] else 9999)
         return video_files[:2]
 
@@ -297,18 +326,30 @@ def _get_mp4_files(identifier: str) -> list:
 # ──────────────────────────────────────────
 
 def _download_clip(url: str, identifier: str, title: str, clip_duration: float) -> dict | None:
-    safe      = identifier[:35].replace("/", "_").replace(" ", "_")
-    clip_path = os.path.join(CLIPS_DIR, f"ia_{safe}.mp4")
+    safe = identifier[:35].replace("/", "_").replace(" ", "_")
+
+    # جيب مدة الفيديو الأصلي
+    vid_dur = _get_url_duration(url)
+    if not vid_dur:
+        vid_dur = 600  # افتراضي لو مش عارف
+
+    # جيب نقطة البداية الصحيحة
+    start = _get_next_start(identifier, vid_dur, clip_duration)
+    if start is None:
+        print(f"  ⏭️ {identifier[:40]} اتكمل، تخطي")
+        return None
+
+    # اسم الكليب يشمل الـ position عشان نفس الفيديو يعمل كليبات مختلفة
+    safe_pos  = str(int(start)).zfill(5)
+    clip_path = os.path.join(CLIPS_DIR, f"ia_{safe}_{safe_pos}.mp4")
 
     if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-        print(f"  ✅ كاش: {safe}")
+        print(f"  ✅ كاش: {safe}_{safe_pos}")
+        _save_used_id(identifier, start + clip_duration)
         return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
 
     try:
-        print(f"  ✂️ بيقطع من URL مباشرة: {identifier} ...")
-
-        # اختيار نقطة عشوائية للبداية (أول 60% من الفيديو)
-        start = random.uniform(10, 120)
+        print(f"  ✂️ قطع من {start:.1f}s — {identifier[:40]}")
 
         cmd = [
             "ffmpeg", "-y", "-loglevel", "error",
@@ -328,8 +369,10 @@ def _download_clip(url: str, identifier: str, title: str, clip_duration: float) 
         r = subprocess.run(cmd, capture_output=True, timeout=120)
 
         if r.returncode == 0 and os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB) — {title[:50]}")
-            _save_used_id(identifier)
+            next_pos  = start + clip_duration
+            completed = (next_pos + clip_duration) > vid_dur
+            _save_used_id(identifier, next_pos, completed=completed)
+            print(f"  ✅ جاهز @ {start:.1f}s→{next_pos:.1f}s {'(مكتمل)' if completed else ''}")
             return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
 
         print(f"  ⚠️ ffmpeg فشل: {r.stderr[:200] if r.stderr else 'unknown'}")
@@ -356,7 +399,7 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         print(f"✅ كاش جاهز ({count} كليب)")
         return random.sample(existing, count)
 
-    clips   = list(existing)
+    clips    = list(existing)
     used_ids = _load_used_ids()
 
     # ── أولاً: FailArmy-Archive مباشرة ──
@@ -380,10 +423,13 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
             all_items.extend(results)
             time.sleep(0.3)
 
-        seen = set()
+        seen   = set()
         unique = []
         for it in all_items:
-            if it["identifier"] not in seen and it["identifier"] not in used_ids:
+            if it["identifier"] not in seen and (
+                it["identifier"] not in used_ids
+                or not used_ids[it["identifier"]].get("completed")
+            ):
                 seen.add(it["identifier"])
                 unique.append(it)
         random.shuffle(unique)
