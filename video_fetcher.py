@@ -1,4 +1,4 @@
-# video_fetcher.py - IA Advanced Search بـ queries ذكية + فلاتر صارمة
+# video_fetcher.py
 
 import os
 import random
@@ -11,62 +11,55 @@ from config import OUTPUT_DIR
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
 CLIP_MIN_DURATION  = 4.0
-CLIP_MAX_DURATION  = 30.0
+CLIP_MAX_DURATION  = 25.0
 TARGET_VIDEO_DURATION = 300
 
 IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
 IA_DOWNLOAD_BASE = "https://archive.org/download"
 IA_METADATA_BASE = "https://archive.org/metadata"
 
-# ──────────────────────────────────────────
-# Queries مخصصة جداً — كلها حيوانات حقيقية
-# ──────────────────────────────────────────
-# الـ query بتستخدم IA Lucene syntax:
-#   title: للبحث في العنوان بس
-#   subject: للبحث في الموضوع
-#   mediatype:movies يضمن إنها فيديو
-#   AND NOT لاستبعاد الكارتون والأنيميشن
-
+# queries واسعة بما يكفي عشان IA يرجع نتائج
 IA_QUERIES = [
-    # مواقف مضحكة مع كلمة funny لازم تكون في العنوان
-    'title:(funny cats fails) AND mediatype:movies AND NOT subject:animation',
-    'title:(funny dogs fails) AND mediatype:movies AND NOT subject:animation',
-    'title:(animals funny moments) AND mediatype:movies AND NOT subject:animation',
-    'title:(funny animal fails compilation) AND mediatype:movies AND NOT subject:animation',
-    'title:(pets funny moments) AND mediatype:movies AND NOT subject:animation',
-    'title:(hilarious animals) AND mediatype:movies AND NOT subject:animation',
-    'title:(funny animal reactions) AND mediatype:movies AND NOT subject:animation',
-    'title:(animals being silly) AND mediatype:movies AND NOT subject:animation',
-    'title:(cats being funny) AND mediatype:movies AND NOT subject:animation',
-    'title:(dogs being funny) AND mediatype:movies AND NOT subject:animation',
-    'title:(funny animal clips) AND mediatype:movies AND NOT subject:animation',
-    'title:(animals try not to laugh) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny cats) AND mediatype:movies',
+    'title:(funny dogs) AND mediatype:movies',
+    'title:(funny animals) AND mediatype:movies',
+    'title:(funny pets) AND mediatype:movies',
+    'title:(cat fails) AND mediatype:movies',
+    'title:(dog fails) AND mediatype:movies',
+    'title:(animal fails) AND mediatype:movies',
+    'title:(silly animals) AND mediatype:movies',
+    'title:(hilarious animals) AND mediatype:movies',
+    'title:(animals being silly) AND mediatype:movies',
+    'title:(funny animal compilation) AND mediatype:movies',
+    'title:(cute funny cats) AND mediatype:movies',
+    'title:(funny cat moments) AND mediatype:movies',
+    'title:(funny dog moments) AND mediatype:movies',
 ]
 
-# كلمات لو اتلاقت في العنوان → استبعاد
+# استبعاد — لو أي كلمة دي موجودة في العنوان → تجاهل
 BLACKLIST_WORDS = [
-    "cartoon", "animation", "animated", "anime", "looney", "tunes",
-    "tom and jerry", "mickey", "disney", "pixar", "documentary",
-    "lecture", "tutorial", "training", "news", "interview",
-    "movie trailer", "horror", "science", "history", "nature film",
-    "wildlife documentary", "facts about", "education",
-    "reaction", "reacting", "react", "watching", "compilation reacts",
-    # استبعاد الفيديوهات العامة اللي مش فيها مواقف مضحكة
-    "cute animals", "baby animals", "adorable", "relaxing",
-    "satisfying", "calming", "beautiful", "amazing nature",
+    "cartoon", "animation", "animated", "anime",
+    "tom and jerry", "mickey", "disney", "pixar",
+    "documentary", "lecture", "tutorial", "training",
+    "news", "interview", "horror", "science",
+    "reaction", "reacting", "react to", "watching",
+    "relaxing", "calming", "satisfying", "sleep",
+    "nature sounds", "asmr",
 ]
 
-# لازم يكون في العنوان كلمة "funny" أو "hilarious" أو "fails" أو "silly" + حيوان
-FUNNY_REQUIRED = [
-    "funny", "hilarious", "fails", "fail", "silly", "humor",
-    "humorous", "comedy", "lol", "laugh", "moments",
-    "try not to laugh", "being silly", "being funny",
+# لازم في العنوان أو الـ subject كلمة تدل على إنه مضحك
+FUNNY_WORDS = [
+    "funny", "hilarious", "fails", "fail", "silly",
+    "humor", "comedy", "lol", "laugh", "amusing",
+    "being silly", "being funny", "chaos", "moments",
 ]
 
-ANIMAL_REQUIRED = [
-    "cat", "cats", "kitten", "kittens", "dog", "dogs", "puppy", "puppies",
-    "animal", "animals", "pet", "pets", "bird", "parrot", "rabbit",
-    "hamster", "goat", "duck", "monkey", "raccoon", "otter",
+# لازم فيه حيوان
+ANIMAL_WORDS = [
+    "cat", "cats", "kitten", "dog", "dogs", "puppy",
+    "animal", "animals", "pet", "pets", "bird",
+    "parrot", "rabbit", "hamster", "goat", "duck",
+    "monkey", "raccoon", "otter", "wildlife",
 ]
 
 
@@ -115,24 +108,24 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
 
 
 # ──────────────────────────────────────────
-# فلتر صارم على نتائج البحث
+# فلتر
 # ──────────────────────────────────────────
 
-def _is_real_animal_video(title: str, subject) -> bool:
+def _is_valid_clip(title: str, subject) -> bool:
     title_lower = title.lower()
     subj_lower  = (subject if isinstance(subject, str) else " ".join(subject or [])).lower()
     combined    = title_lower + " " + subj_lower
 
-    # استبعاد لو فيه blacklist
+    # استبعاد
     if any(bw in combined for bw in BLACKLIST_WORDS):
         return False
 
-    # لازم يكون فيه حيوان
-    if not any(aw in combined for aw in ANIMAL_REQUIRED):
+    # لازم فيه حيوان
+    if not any(aw in combined for aw in ANIMAL_WORDS):
         return False
 
-    # لازم يكون فيه كلمة تدل على إنه مضحك — ده الفلتر الأساسي
-    if not any(fw in combined for fw in FUNNY_REQUIRED):
+    # لازم فيه كلمة مضحك — بس بنفحص العنوان بس (مش combined) عشان نضمن إنه فعلاً funny
+    if not any(fw in title_lower for fw in FUNNY_WORDS):
         return False
 
     return True
@@ -142,13 +135,13 @@ def _is_real_animal_video(title: str, subject) -> bool:
 # IA Search
 # ──────────────────────────────────────────
 
-def _search_ia(query: str, rows: int = 20) -> list:
+def _search_ia(query: str, rows: int = 30) -> list:
     try:
         params = {
             "q":      query,
             "fl[]":   ["identifier", "title", "subject", "downloads"],
             "rows":   rows,
-            "page":   random.randint(1, 5),
+            "page":   random.randint(1, 3),
             "output": "json",
             "sort[]": "downloads desc",
         }
@@ -164,7 +157,7 @@ def _search_ia(query: str, rows: int = 20) -> list:
             subject    = d.get("subject", [])
             if not identifier:
                 continue
-            if _is_real_animal_video(title, subject):
+            if _is_valid_clip(title, subject):
                 results.append({
                     "identifier": identifier,
                     "title":      title,
@@ -195,7 +188,7 @@ def _get_mp4_files(identifier: str) -> list:
             size = int(f.get("size", 0))
             if (
                 (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
-                and 500_000 < size < 8_000_000   # 500KB → 8MB (فيديوهات قصيرة 10-30 ثانية فقط)
+                and 500_000 < size < 150_000_000   # 500KB → 150MB
                 and not name.startswith("_")
             ):
                 video_files.append({
@@ -204,8 +197,8 @@ def _get_mp4_files(identifier: str) -> list:
                     "size": size,
                 })
 
-        # الملف المتوسط الحجم أفضل (مش أصغر ولا أكبر)
-        video_files.sort(key=lambda x: abs(x["size"] - 3_000_000))
+        # نفضل الملفات المتوسطة الحجم (حوالي 15MB)
+        video_files.sort(key=lambda x: abs(x["size"] - 15_000_000))
         return video_files[:2]
 
     except Exception as e:
@@ -218,7 +211,7 @@ def _get_mp4_files(identifier: str) -> list:
 # ──────────────────────────────────────────
 
 def _download_clip(url: str, identifier: str, title: str, clip_duration: float) -> dict | None:
-    safe   = identifier[:35].replace("/", "_").replace(" ", "_")
+    safe      = identifier[:35].replace("/", "_").replace(" ", "_")
     clip_path = os.path.join(CLIPS_DIR, f"ia_{safe}.mp4")
     tmp       = os.path.join(CLIPS_DIR, f"_tmp_{safe}.mp4")
 
@@ -278,18 +271,17 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
     clips  = list(existing)
     needed = count - len(clips)
 
-    # جمع نتائج من كل الـ queries
-    print(f"\n🔍 بيبحث في IA عن فيديوهات حيوانات حقيقية...")
+    print(f"\n🔍 بيبحث في IA عن فيديوهات مضحكة...")
     all_items = []
-    queries   = random.sample(IA_QUERIES, min(5, len(IA_QUERIES)))
+    queries   = random.sample(IA_QUERIES, min(6, len(IA_QUERIES)))
 
     for q in queries:
-        results = _search_ia(q, rows=15)
-        print(f"  ✅ '{q[:50]}...' → {len(results)} نتيجة بعد الفلتر")
+        results = _search_ia(q, rows=30)
+        print(f"  ✅ '{q[:60]}' → {len(results)} نتيجة")
         all_items.extend(results)
         time.sleep(0.3)
 
-    # إزالة تكرار + ترتيب بالـ downloads
+    # إزالة تكرار + ترتيب
     seen   = set()
     unique = []
     for it in all_items:
@@ -316,7 +308,6 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         if result:
             clips.append(result)
 
-    # كرر لو ناقص
     if 0 < len(clips) < count:
         while len(clips) < count:
             clips.append(random.choice(clips))
