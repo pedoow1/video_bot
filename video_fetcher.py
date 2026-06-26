@@ -1,4 +1,4 @@
-# video_fetcher.py - GPT-4o بيبحث في archive.org ويجيب روابط mp4 مباشرة
+# video_fetcher.py - IA Advanced Search بـ queries ذكية + فلاتر صارمة
 
 import os
 import random
@@ -6,7 +6,7 @@ import subprocess
 import json
 import time
 import requests
-from config import OUTPUT_DIR, GITHUB_TOKEN
+from config import OUTPUT_DIR
 
 CLIPS_DIR = os.path.join(OUTPUT_DIR, "cat_clips")
 
@@ -14,8 +14,46 @@ CLIP_MIN_DURATION  = 4.0
 CLIP_MAX_DURATION  = 30.0
 TARGET_VIDEO_DURATION = 300
 
-GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
-IA_DOWNLOAD_BASE  = "https://archive.org/download"
+IA_SEARCH_URL    = "https://archive.org/advancedsearch.php"
+IA_DOWNLOAD_BASE = "https://archive.org/download"
+IA_METADATA_BASE = "https://archive.org/metadata"
+
+# ──────────────────────────────────────────
+# Queries مخصصة جداً — كلها حيوانات حقيقية
+# ──────────────────────────────────────────
+# الـ query بتستخدم IA Lucene syntax:
+#   title: للبحث في العنوان بس
+#   subject: للبحث في الموضوع
+#   mediatype:movies يضمن إنها فيديو
+#   AND NOT لاستبعاد الكارتون والأنيميشن
+
+IA_QUERIES = [
+    'title:(funny cats) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
+    'title:(funny dogs) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
+    'title:(funny animals compilation) AND mediatype:movies AND NOT subject:animation',
+    'title:(cute kittens) AND mediatype:movies AND NOT subject:animation',
+    'title:(cute puppies) AND mediatype:movies AND NOT subject:animation',
+    'title:(funny pets) AND mediatype:movies AND NOT subject:animation AND NOT subject:cartoon',
+    'title:(animals being funny) AND mediatype:movies AND NOT subject:animation',
+    'title:(cat video) AND subject:animals AND mediatype:movies AND NOT subject:animation',
+    'title:(dog video) AND subject:animals AND mediatype:movies AND NOT subject:animation',
+    'title:(funny wildlife) AND mediatype:movies AND NOT subject:animation',
+]
+
+# كلمات لو اتلاقت في العنوان تبان إن الفيديو مش حيوانات حقيقية
+BLACKLIST_WORDS = [
+    "cartoon", "animation", "animated", "anime", "looney", "tunes",
+    "tom and jerry", "mickey", "disney", "pixar", "documentary about",
+    "lecture", "tutorial", "training", "news", "interview", "film",
+    "movie trailer", "horror", "science", "history",
+]
+
+# كلمات لازم تكون في العنوان أو الـ subject
+ANIMAL_WHITELIST = [
+    "cat", "cats", "kitten", "kittens", "dog", "dogs", "puppy", "puppies",
+    "animal", "animals", "pet", "pets", "bird", "parrot", "rabbit",
+    "hamster", "funny", "cute", "compilation", "wildlife",
+]
 
 
 # ──────────────────────────────────────────
@@ -63,107 +101,119 @@ def _cut_clip(src: str, out_path: str, target_duration: float) -> bool:
 
 
 # ──────────────────────────────────────────
-# GPT-4o يبحث في archive.org ويجيب روابط mp4
+# فلتر صارم على نتائج البحث
 # ──────────────────────────────────────────
 
-def _ask_gpt_for_direct_urls(count: int) -> list:
-    """
-    GPT-4o بيستخدم web search يبحث في archive.org
-    ويرجع روابط mp4 مباشرة قابلة للتحميل.
-    """
-    if not GITHUB_TOKEN:
-        print("  ⚠️ GH_TOKEN مش موجود")
+def _is_real_animal_video(title: str, subject) -> bool:
+    title_lower = title.lower()
+    subj_lower  = (subject if isinstance(subject, str) else " ".join(subject or [])).lower()
+    combined    = title_lower + " " + subj_lower
+
+    # استبعاد لو فيه blacklist
+    if any(bw in combined for bw in BLACKLIST_WORDS):
+        return False
+
+    # لازم يكون فيه حاجة من الـ whitelist
+    if not any(aw in combined for aw in ANIMAL_WHITELIST):
+        return False
+
+    return True
+
+
+# ──────────────────────────────────────────
+# IA Search
+# ──────────────────────────────────────────
+
+def _search_ia(query: str, rows: int = 20) -> list:
+    try:
+        params = {
+            "q":      query,
+            "fl[]":   ["identifier", "title", "subject", "downloads"],
+            "rows":   rows,
+            "page":   random.randint(1, 5),
+            "output": "json",
+            "sort[]": "downloads desc",
+        }
+        r = requests.get(IA_SEARCH_URL, params=params, timeout=15)
+        if r.status_code != 200:
+            return []
+
+        docs    = r.json().get("response", {}).get("docs", [])
+        results = []
+        for d in docs:
+            identifier = d.get("identifier", "")
+            title      = d.get("title", "") or ""
+            subject    = d.get("subject", [])
+            if not identifier:
+                continue
+            if _is_real_animal_video(title, subject):
+                results.append({
+                    "identifier": identifier,
+                    "title":      title,
+                    "downloads":  d.get("downloads", 0),
+                })
+        return results
+
+    except Exception as e:
+        print(f"  ⚠️ IA search خطأ: {e}")
         return []
 
-    prompt = f"""Search archive.org for {count} funny animal videos and return direct download links.
 
-Use web search to find real .mp4 files on archive.org. Search for:
-- "site:archive.org funny cats mp4"
-- "site:archive.org funny dogs compilation mp4"
-- "site:archive.org funny animals mp4"
+# ──────────────────────────────────────────
+# جلب ملفات الفيديو من item
+# ──────────────────────────────────────────
 
-For each video found, get the DIRECT mp4 download URL in this format:
-https://archive.org/download/IDENTIFIER/filename.mp4
+def _get_mp4_files(identifier: str) -> list:
+    try:
+        r = requests.get(f"{IA_METADATA_BASE}/{identifier}", timeout=15)
+        if r.status_code != 200:
+            return []
 
-Rules:
-- Must be real animals (cats, dogs, birds, pets) — NO cartoons, NO animations
-- Must be a direct .mp4 link that can be downloaded
-- Must be publicly accessible
+        files       = r.json().get("files", [])
+        video_files = []
+        for f in files:
+            name = f.get("name", "")
+            fmt  = f.get("format", "").lower()
+            size = int(f.get("size", 0))
+            if (
+                (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
+                and 1_000_000 < size < 300_000_000   # 1MB → 300MB
+                and not name.startswith("_")
+            ):
+                video_files.append({
+                    "url":  f"{IA_DOWNLOAD_BASE}/{identifier}/{requests.utils.quote(name)}",
+                    "name": name,
+                    "size": size,
+                })
 
-Reply with JSON ONLY:
-{{
-  "videos": [
-    {{"url": "https://archive.org/download/IDENTIFIER/file.mp4", "title": "video title"}},
-    ...
-  ]
-}}
+        # الملف المتوسط الحجم أفضل (مش أصغر ولا أكبر)
+        video_files.sort(key=lambda x: abs(x["size"] - 40_000_000))
+        return video_files[:2]
 
-Exactly {count} items with real, working direct mp4 URLs."""
-
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": "gpt-4o",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 2000,
-        "temperature": 0.2,
-        "tools": [{"type": "web_search_preview"}],
-    }
-
-    for attempt in range(3):
-        try:
-            print(f"  🔍 GPT-4o بيبحث في archive.org (محاولة {attempt+1})...")
-            r = requests.post(GITHUB_MODELS_URL, headers=headers, json=payload, timeout=120)
-            r.raise_for_status()
-
-            # استخرج الـ text من الـ response
-            content = r.json()["choices"][0]["message"]["content"]
-            if not content:
-                print(f"  ⚠️ response فاضي")
-                continue
-
-            content = content.replace("```json", "").replace("```", "").strip()
-            data    = json.loads(content)
-            videos  = data.get("videos", [])
-
-            if videos:
-                print(f"  ✅ GPT-4o لقى {len(videos)} فيديو:")
-                for v in videos:
-                    print(f"     • {v['url'][:80]}")
-                return videos
-
-        except json.JSONDecodeError:
-            print(f"  ⚠️ محاولة {attempt+1}: مش JSON — {content[:200]}")
-        except Exception as e:
-            print(f"  ⚠️ محاولة {attempt+1} فشلت: {e}")
-            time.sleep(3)
-
-    return []
+    except Exception as e:
+        print(f"  ⚠️ metadata خطأ ({identifier}): {e}")
+        return []
 
 
 # ──────────────────────────────────────────
-# تحميل كليب من رابط مباشر
+# تحميل كليب
 # ──────────────────────────────────────────
 
-def _download_from_url(url: str, title: str, clip_duration: float) -> dict | None:
-    # اسم الملف من الـ URL
-    safe_name = url.split("/")[-1].replace(".mp4", "").replace(" ", "_")[:40]
-    clip_path = os.path.join(CLIPS_DIR, f"ia_{safe_name}.mp4")
-    tmp       = os.path.join(CLIPS_DIR, f"_tmp_{safe_name}.mp4")
+def _download_clip(url: str, identifier: str, title: str, clip_duration: float) -> dict | None:
+    safe   = identifier[:35].replace("/", "_").replace(" ", "_")
+    clip_path = os.path.join(CLIPS_DIR, f"ia_{safe}.mp4")
+    tmp       = os.path.join(CLIPS_DIR, f"_tmp_{safe}.mp4")
 
-    # كاش
     if os.path.exists(clip_path) and os.path.getsize(clip_path) > 10_000:
-        print(f"  ✅ كاش: {safe_name}")
-        return {"path": clip_path, "description": title, "ia_url": url}
+        print(f"  ✅ كاش: {safe}")
+        return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
 
     try:
-        print(f"  ⬇️ {url[:70]}...")
+        print(f"  ⬇️ {identifier} ...")
         r = requests.get(url, stream=True, timeout=120,
                          headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200:
-            print(f"  ⚠️ فشل: HTTP {r.status_code}")
+            print(f"  ⚠️ HTTP {r.status_code}")
             return None
 
         downloaded = 0
@@ -174,16 +224,13 @@ def _download_from_url(url: str, title: str, clip_duration: float) -> dict | Non
                 if downloaded > 150_000_000:
                     break
 
-        if not os.path.exists(tmp) or os.path.getsize(tmp) < 500_000:
-            print(f"  ⚠️ ملف صغير جداً أو فاضي")
+        if os.path.getsize(tmp) < 500_000:
             return None
 
         if _cut_clip(tmp, clip_path, clip_duration):
-            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB)")
-            return {"path": clip_path, "description": title, "ia_url": url}
-        else:
-            print(f"  ⚠️ cut فشل")
-            return None
+            print(f"  ✅ جاهز ({os.path.getsize(clip_path)//1024} KB) — {title[:50]}")
+            return {"path": clip_path, "description": title, "ia_url": f"https://archive.org/details/{identifier}"}
+        return None
 
     except Exception as e:
         print(f"  ⚠️ خطأ: {e}")
@@ -205,36 +252,49 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         clip_duration = min(TARGET_VIDEO_DURATION / count, CLIP_MAX_DURATION)
         print(f"🕐 مدة كل كليب: {clip_duration:.1f}s")
 
-    # كاش موجود؟
     existing = _get_existing_clips()
     if len(existing) >= count:
-        print(f"✅ {count} كليب موجودين في الكاش")
+        print(f"✅ كاش جاهز ({count} كليب)")
         return random.sample(existing, count)
 
     clips  = list(existing)
     needed = count - len(clips)
 
-    # GPT-4o يبحث ويجيب روابط مباشرة
-    print(f"\n🤖 GPT-4o بيبحث في archive.org عن {needed} فيديو حيوانات...")
-    videos = _ask_gpt_for_direct_urls(needed + 3)
+    # جمع نتائج من كل الـ queries
+    print(f"\n🔍 بيبحث في IA عن فيديوهات حيوانات حقيقية...")
+    all_items = []
+    queries   = random.sample(IA_QUERIES, min(5, len(IA_QUERIES)))
 
-    if not videos:
-        print("❌ GPT-4o مرجعش بنتائج")
-        return clips
+    for q in queries:
+        results = _search_ia(q, rows=15)
+        print(f"  ✅ '{q[:50]}...' → {len(results)} نتيجة بعد الفلتر")
+        all_items.extend(results)
+        time.sleep(0.3)
 
-    random.shuffle(videos)
+    # إزالة تكرار + ترتيب بالـ downloads
+    seen   = set()
+    unique = []
+    for it in all_items:
+        if it["identifier"] not in seen:
+            seen.add(it["identifier"])
+            unique.append(it)
+    unique.sort(key=lambda x: x["downloads"], reverse=True)
 
-    for video in videos:
+    print(f"\n📋 {len(unique)} فيديو بعد الفلتر — جاري التحميل...")
+
+    for item in unique:
         if len(clips) >= count:
             break
-        url   = video.get("url", "")
-        title = video.get("title", "funny animals")
 
-        if not url or "archive.org" not in url:
-            print(f"  ⚠️ رابط مش من archive.org: {url[:60]}")
+        identifier = item["identifier"]
+        title      = item["title"]
+
+        mp4_files = _get_mp4_files(identifier)
+        if not mp4_files:
+            print(f"  ⚠️ مفيش mp4 في {identifier}")
             continue
 
-        result = _download_from_url(url, title, clip_duration)
+        result = _download_clip(mp4_files[0]["url"], identifier, title, clip_duration)
         if result:
             clips.append(result)
 
@@ -243,9 +303,8 @@ def fetch_cat_clips(count: int, clip_duration: float = None) -> list:
         while len(clips) < count:
             clips.append(random.choice(clips))
 
-    result = clips[:count]
-    print(f"\n✅ {len(result)} كليب جاهز!")
-    return result
+    print(f"\n✅ {len(clips[:count])} كليب جاهز!")
+    return clips[:count]
 
 
 def _get_existing_clips() -> list:
@@ -276,7 +335,7 @@ def clear_clips_cache():
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار...\n")
+    print("🧪 اختبار IA search...\n")
     clips = fetch_cat_clips(count=3)
     print(f"\n✅ ({len(clips)}):")
     for c in clips:
