@@ -50,6 +50,7 @@ BLACKLIST_WORDS = [
     "lecture", "tutorial", "training", "news", "interview",
     "movie trailer", "horror", "science", "history", "nature film",
     "wildlife documentary", "facts about", "education",
+    "reaction", "reacting", "react", "watching", "compilation reacts",
     # استبعاد الفيديوهات العامة اللي مش فيها مواقف مضحكة
     "cute animals", "baby animals", "adorable", "relaxing",
     "satisfying", "calming", "beautiful", "amazing nature",
@@ -58,7 +59,7 @@ BLACKLIST_WORDS = [
 # لازم يكون في العنوان كلمة "funny" أو "hilarious" أو "fails" أو "silly" + حيوان
 FUNNY_REQUIRED = [
     "funny", "hilarious", "fails", "fail", "silly", "humor",
-    "humorous", "comedy", "lol", "laugh", "reactions", "moments",
+    "humorous", "comedy", "lol", "laugh", "moments",
     "try not to laugh", "being silly", "being funny",
 ]
 
@@ -194,7 +195,7 @@ def _get_mp4_files(identifier: str) -> list:
             size = int(f.get("size", 0))
             if (
                 (name.lower().endswith(".mp4") or "mpeg4" in fmt or "h.264" in fmt)
-                and 1_000_000 < size < 300_000_000   # 1MB → 300MB
+                and 500_000 < size < 8_000_000   # 500KB → 8MB (فيديوهات قصيرة 10-30 ثانية فقط)
                 and not name.startswith("_")
             ):
                 video_files.append({
@@ -204,7 +205,7 @@ def _get_mp4_files(identifier: str) -> list:
                 })
 
         # الملف المتوسط الحجم أفضل (مش أصغر ولا أكبر)
-        video_files.sort(key=lambda x: abs(x["size"] - 40_000_000))
+        video_files.sort(key=lambda x: abs(x["size"] - 3_000_000))
         return video_files[:2]
 
     except Exception as e:
