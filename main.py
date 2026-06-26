@@ -93,10 +93,30 @@ def run_cat_pipeline(topic: str = None):
     print("="*55 + "\n")
 
     try:
-        # ─── الخطوة 1: جلب الكليبات أولاً عشان نعرف الـ descriptions ──
-        SCENE_COUNT = 10
-        print(f"🐱 [1/4] جلب {SCENE_COUNT} كليبات حيوانات من Internet Archive أولاً...")
-        cat_clips_data = fetch_cat_clips(count=SCENE_COUNT)
+        TARGET_DURATION = 300  # 5 دقايق بالضبط
+
+        # ─── الخطوة 1: توليد السكريبت (intro + outro فقط) ──
+        print("\n📝 [1/4] توليد intro + outro بـ Mistral...")
+        story = generate_funny_animals_script(topic)
+        print(f"   العنوان: {story['title']}")
+
+        # ─── الخطوة 2: تحويل النص لصوت ──────────────────
+        print("\n🎙️ [2/4] تحويل النص لصوت...")
+        audio_filename = f"audio_cats_{timestamp}.wav"
+        audio_info     = text_to_speech_paragraphs(story["story_paragraphs"], audio_filename)
+        audio_path     = audio_info["audio_path"]
+        intro_duration = audio_info["total_duration"]
+        print(f"   مدة الصوت (intro+outro): {intro_duration:.0f} ثانية")
+
+        # ─── الخطوة 3: جلب الكليبات لملء باقي الـ 5 دقايق ──
+        middle_duration = TARGET_DURATION - intro_duration
+        if middle_duration < 10:
+            middle_duration = TARGET_DURATION  # fallback لو الصوت طويل
+        SCENE_COUNT = 12  # نجيب أكتر عشان نضمن تغطية الوقت
+        clip_target = middle_duration / SCENE_COUNT
+
+        print(f"\n🐱 [3/4] جلب {SCENE_COUNT} كليبات ({clip_target:.0f}s/كل كليب) من Internet Archive...")
+        cat_clips_data = fetch_cat_clips(count=SCENE_COUNT, clip_duration=clip_target)
 
         if not cat_clips_data:
             raise RuntimeError(
@@ -104,22 +124,7 @@ def run_cat_pipeline(topic: str = None):
                 "Internet Archive رجع 0 فيديو."
             )
 
-        # استخرج الـ descriptions عشان نبعتها لـ Mistral
-        clip_descriptions = [c["description"] for c in cat_clips_data]
-        print(f"   ✅ {len(clip_descriptions)} كليب جاهز — بنبعت الـ descriptions لـ Mistral")
-
-        # ─── الخطوة 2: توليد السكريبت بناءً على الكليبات الفعلية ──
-        print("\n📝 [2/4] توليد سكريبت مبني على الكليبات الفعلية بـ Mistral...")
-        story = generate_funny_animals_script(topic, clip_descriptions=clip_descriptions)
-        print(f"   العنوان: {story['title']}")
-
-        # ─── الخطوة 3: تحويل النص لصوت ──────────────────
-        print("\n🎙️ [3/4] تحويل النص لصوت...")
-        audio_filename = f"audio_cats_{timestamp}.wav"
-        audio_info     = text_to_speech_paragraphs(story["story_paragraphs"], audio_filename)
-        audio_path     = audio_info["audio_path"]
-        duration       = audio_info["total_duration"]
-        print(f"   مدة الصوت: {duration:.0f} ثانية ({duration/60:.1f} دقيقة)")
+        print(f"   ✅ {len(cat_clips_data)} كليب جاهز")
 
         # استخرج الـ paths للـ video_maker
         cat_clips = [c["path"] for c in cat_clips_data]
@@ -131,7 +136,8 @@ def run_cat_pipeline(topic: str = None):
             story, audio_path, video_filename,
             cat_clips=cat_clips,
             scene_durations=audio_info["durations"],
-            word_timings=audio_info.get("word_timings", [])
+            word_timings=audio_info.get("word_timings", []),
+            target_duration=TARGET_DURATION,
         )
 
         # Thumbnail
